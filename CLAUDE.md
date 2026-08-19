@@ -180,15 +180,18 @@ SDR device (input-*.cpp)
 | `src/input-common.cpp/h` | Input device abstraction (`input_t` function-pointer interface) |
 | `src/filters.cpp/h` | IIR lowpass and notch filters |
 | `src/squelch.cpp/h` | Noise-power-based voice activity detection |
+| `src/wideband_scan.cpp/h` | Wideband range scan: carrier detection grid, debouncing, active-carrier slot assignment |
 | `src/ctcss.cpp/h` | CTCSS tone detection |
 
 ### Device Modes
 
-Each device operates in one of two modes, set via `mode = "multichannel"` (default) or `mode = "scan"` in config.
+Each device operates in one of three modes, set via `mode = "multichannel"` (default), `mode = "scan"`, or `mode = "wideband_scan"` in config.
 
 **`R_MULTICHANNEL`** — The SDR is tuned to a fixed center frequency and multiple channels are demodulated simultaneously from the same wideband capture. Each channel has a single `freq` value that must fall within the SDR's bandwidth. This is the common case for monitoring several frequencies at once.
 
 **`R_SCAN`** — The device has exactly one channel, but that channel holds a `freqs` list of frequencies to cycle through. A controller thread monitors the squelch: after ~2 seconds of no signal (10 × 200 ms polls), it retunes the SDR hardware to the next frequency via `input_set_centerfreq()`. When a signal is detected, it stays on the current frequency. Per-frequency settings (labels, `squelch_threshold`/`squelch_snr_threshold`, `modulations`, `notch`/`notch_q`, `ctcss`, `bandwidth`, `ampfactor`) are **parallel lists** to `freqs` (same index = same frequency), not a list of objects — `freqs` is parsed as numbers. Only one channel per device in scan mode. (`rtl_airband.cpp:101-140`, `config.cpp:312-729`)
+
+**`R_WIDEBAND_SCAN`** — The device covers a continuous frequency range (`freq_from`/`freq_to`, `channel_step` in kHz, default 12.5) instead of fixed channels. On every FFT batch, each grid bin's power is compared against the 25th percentile of grid noise; a carrier above the threshold (`squelch_snr_threshold`, default 9.54 dB — used for detection as well) for `min_above` (3) consecutive batches is assigned to one of `max_active_carriers` (default 8) slots, and a slot is dropped after `max_missing` (10) batches below the threshold (`wideband_scan.cpp:86-87`). Each slot is demodulated like a regular channel at its detected frequency, using device-level file outputs only (`include_freq` is forced for file outputs, since all slots share one filename template). Because a slot only exists while its carrier is present, the per-slot squelch noise floor is seeded from the grid noise estimate on slot assignment (`Squelch::set_noise_floor`) and tracked against the current grid noise each batch while the slot is held (`Squelch::track_noise_floor`); otherwise the floor would settle on the carrier level and the squelch would never open. In foreground TUI mode (`-f`) the grid's signal/noise levels are drawn as a rolling text scope. BCM VideoCore FFT is not supported. (`config.cpp:779-953`, `wideband_scan.cpp`, `rtl_airband.cpp:767-768`)
 
 ### Threading Model
 
@@ -211,8 +214,19 @@ mixers: { mix1: { outputs: ( { type = "icecast"; ... } ); } };
 
 Mixers have **no `inputs` section** — a channel connects to a mixer implicitly via an output `type = "mixer"` + `name` (+ optional `ampfactor`, `balance`), see `mixer_connect_input` (`src/config.cpp:168-193`, `src/mixer.cpp:57`).
 
+`wideband_scan` devices have no `channels` — they take `freq_from`/`freq_to` and device-level `outputs` (file outputs only, `include_freq` is forced):
+
+```
+devices: ( { type = "rtlsdr"; mode = "wideband_scan"; freq_from = 172.0; freq_to = 173.5;
+             channel_step = 12.5; max_active_carriers = 8; modulation = "NFM";
+             squelch_snr_threshold = 9.54;
+             outputs: ( { type = "file"; directory = "/var/log/radio";
+                          filename_template = "SCAN-mobile"; append = true;
+                          include_freq = true; } ); } );
+```
+
 Output types: `icecast`, `file`, `rawfile`, `udp_stream`, `mixer`, `pulse`.
 
 ### Unit Tests
 
-Tests use Google Test (fetched via CMake FetchContent). Test files in `src/test_*.cpp` cover filters, squelch, CTCSS, helper functions, and signal generation. `src/test_base_class.h` provides test utilities.
+Tests use Google Test (fetched via CMake FetchContent). Test files in `src/test_*.cpp` cover filters, squelch, CTCSS, wideband scan, helper functions, and signal generation. `src/test_base_class.h` provides test utilities.
