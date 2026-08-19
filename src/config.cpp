@@ -934,6 +934,19 @@ static int parse_wideband_scan_channels(device_t* dev, libconfig::Setting& cfg, 
         }
         channel->outputs = (output_t*)XREALLOC(channel->outputs, outputs_enabled * sizeof(struct output_t));
         channel->output_count = outputs_enabled;
+        for (int k = 0; k < outputs_enabled; k++) {
+            if (channel->outputs[k].type == O_FILE || channel->outputs[k].type == O_RAWFILE) {
+                file_data* fdata = (file_data*)(channel->outputs[k].data);
+                if (!fdata->include_freq) {
+                    // All slots share the same filename template, without the frequency in the name
+                    // files of different carriers would overwrite each other.
+                    fdata->include_freq = true;
+                    if (s == 0) {
+                        cerr << "Warning: devices.[" << i << "]: wideband_scan requires include_freq for file outputs, enabling it\n";
+                    }
+                }
+            }
+        }
         dev->channel_count++;
     }
     return 0;
