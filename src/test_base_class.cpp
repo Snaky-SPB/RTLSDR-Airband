@@ -21,9 +21,18 @@
 
 #include "logging.h"
 
+#include "rtl_airband.h"
 #include "test_base_class.h"
 
 using namespace std;
+
+// globals normally defined in rtl_airband.cpp, which is not linked into the unit tests
+size_t fft_size_log = DEFAULT_FFT_SIZE_LOG;
+size_t fft_size = 1 << fft_size_log;
+bool use_localtime = false;
+double min_transmission_time = 1.0;
+double max_transmission_time = 60.0 * 60.0;
+double max_transmission_idle = 0.5;
 
 void delete_directory(const string& root) {
     DIR* dp = NULL;

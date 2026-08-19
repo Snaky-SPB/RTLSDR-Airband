@@ -140,6 +140,7 @@ struct file_data {
     bool append;
     bool split_on_transmission;
     bool include_freq;
+    bool discontinuity_tone;
     timeval open_time;
     timeval last_write_time;
     FILE* f;
@@ -350,11 +351,9 @@ struct output_params_t {
 extern char const* RTL_AIRBAND_VERSION;
 
 // output.cpp
-lame_t airlame_init(mix_modes mixmode, int highpass, int lowpass);
 void shout_setup(icecast_data* icecast, mix_modes mixmode);
 void disable_device_outputs(device_t* dev);
 void disable_channel_outputs(channel_t* channel);
-void close_channel_file_outputs(channel_t* channel);
 void* output_check_thread(void* params);
 void* output_thread(void* params);
 

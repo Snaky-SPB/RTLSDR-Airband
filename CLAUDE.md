@@ -175,7 +175,8 @@ SDR device (input-*.cpp)
 | `src/rtl_airband.cpp` | Main entry point, demod loop, thread management |
 | `src/rtl_airband.h` | All major struct/enum definitions (`device_t`, `channel_t`, `mixer_t`, `output_t`) |
 | `src/config.cpp` | libconfig++ parsing for devices, channels, mixers, outputs |
-| `src/output.cpp` | MP3 encoding, Icecast connections, file/UDP output |
+| `src/output.cpp` | MP3 encoding, Icecast connections, UDP output |
+| `src/file_output.cpp/h` | File output (mp3/raw) lifecycle: filename/timestamp, open/append (discontinuity tones `discontinuity_tone`, default on), per-batch write, close policy (hour/split), lametag flush |
 | `src/mixer.cpp` | Multi-channel mixer with ampfactor/balance |
 | `src/input-*.cpp` | SDR device drivers (rtlsdr, soapysdr, mirisdr, file) |
 | `src/input-common.cpp/h` | Input device abstraction (`input_t` function-pointer interface) |

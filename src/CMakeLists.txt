@@ -281,6 +281,7 @@ add_library (rtl_airband_base OBJECT
 	input-helpers.cpp
 	mixer.cpp
 	output.cpp
+	file_output.cpp
 	rtl_airband.cpp
 	squelch.cpp
 	ctcss.cpp
@@ -360,6 +361,8 @@ if(BUILD_UNITTESTS)
 		generate_signal.cpp
 		helper_functions.cpp
 		wideband_scan.cpp
+		file_output.cpp
+		util.cpp
 	)
 
 	add_executable(

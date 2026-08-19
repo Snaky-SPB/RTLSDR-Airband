@@ -122,6 +122,7 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
             fdata->append = (!outs[o].exists("append")) || (bool)(outs[o]["append"]);
             fdata->split_on_transmission = outs[o].exists("split_on_transmission") ? (bool)(outs[o]["split_on_transmission"]) : false;
             fdata->include_freq = outs[o].exists("include_freq") ? (bool)(outs[o]["include_freq"]) : false;
+            fdata->discontinuity_tone = outs[o].exists("discontinuity_tone") ? (bool)(outs[o]["discontinuity_tone"]) : true;
 
             channel->outputs[oo].has_mp3_output = true;
 
@@ -160,6 +161,7 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
             fdata->append = (!outs[o].exists("append")) || (bool)(outs[o]["append"]);
             fdata->split_on_transmission = outs[o].exists("split_on_transmission") ? (bool)(outs[o]["split_on_transmission"]) : false;
             fdata->include_freq = outs[o].exists("include_freq") ? (bool)(outs[o]["include_freq"]) : false;
+            fdata->discontinuity_tone = outs[o].exists("discontinuity_tone") ? (bool)(outs[o]["discontinuity_tone"]) : true;
             channel->needs_raw_iq = channel->has_iq_outputs = 1;
 
             if (fdata->continuous && fdata->split_on_transmission) {

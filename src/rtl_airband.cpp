@@ -59,6 +59,7 @@
 #include <ctime>
 #include <iostream>
 #include <libconfig.h++>
+#include "file_output.h"
 #include "input-common.h"
 #include "logging.h"
 #include "rtl_airband.h"
