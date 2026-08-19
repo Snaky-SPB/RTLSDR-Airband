@@ -93,6 +93,30 @@ TEST_F(SquelchTest, set_noise_floor) {
     EXPECT_FLOAT_EQ(0.05f, squelch.noise_level());
 }
 
+TEST_F(SquelchTest, track_noise_floor) {
+    Squelch squelch;
+    squelch.reset();
+    const float noise = 0.05f;
+    squelch.set_noise_floor(noise);
+
+    // non-positive levels are ignored
+    squelch.track_noise_floor(0.0f);
+    EXPECT_FLOAT_EQ(noise, squelch.noise_level());
+
+    // converges toward the target level, both up and down
+    for (int i = 0; i < 500; ++i) {
+        squelch.track_noise_floor(2.0f * noise);
+    }
+    ASSERT_GE(squelch.noise_level(), 2.0f * noise - 0.001f);
+    ASSERT_LE(squelch.noise_level(), 2.0f * noise + 0.001f);
+
+    for (int i = 0; i < 500; ++i) {
+        squelch.track_noise_floor(0.5f * noise);
+    }
+    ASSERT_GE(squelch.noise_level(), 0.5f * noise - 0.001f);
+    ASSERT_LE(squelch.noise_level(), 0.5f * noise + 0.001f);
+}
+
 TEST_F(SquelchTest, seeded_noise_floor_opens_on_carrier) {
     // wideband_scan resets the squelch when a carrier is assigned and seeds the
     // noise floor from the grid noise estimate, so a carrier at the default

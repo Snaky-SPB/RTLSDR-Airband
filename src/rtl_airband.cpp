@@ -358,10 +358,14 @@ static void wideband_apply_slots(device_t* dev, int device_num) {
     if (!dev->wideband)
         return;
 
+    const float noise_floor = sqrtf(wideband_scan_noise_power(dev->wideband));
     const int* slots = wideband_scan_slots(dev->wideband);
     int count = wideband_scan_slot_count(dev->wideband);
     for (int i = 0; i < count && i < dev->channel_count; i++) {
         wideband_set_channel_frequency(dev, device_num, i, slots[i]);
+        // Keep the threshold relative to the current band noise while the carrier is held
+        if (slots[i] != 0)
+            dev->channels[i].freqlist[0].squelch.track_noise_floor(noise_floor);
     }
 }
 
