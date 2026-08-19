@@ -76,6 +76,7 @@ The container image is built from a multi-stage `Dockerfile` based on `alpine:la
 - Build/runtime dependencies come from `apk`. Note the Alpine-specific package names: `libconfig++` (Alpine splits the C++ binding into its own package), `libstdc++` (not in the base image), `fftw-single-libs`, `libpulse`, and `pkgconf` (provides `pkg-config`).
 - SoapySDR, the rtl-sdr-blog fork (built from source for RTL-SDR Blog V4 support), and libmirisdr-4 are compiled from source with CMake and installed to `/usr` — musl only searches `/lib` and `/usr/lib`, not `/usr/local/lib`. `ENV CMAKE_POLICY_VERSION_MINIMUM=3.5` lets their pre-3.5 `cmake_minimum_required` configure under Alpine's CMake 4.
 - Both stages run `unittests`, so a broken build fails `docker build`. `scripts/find_version` is POSIX `sh` (Alpine has no bash).
+- If the build context is assembled on a Windows checkout with `core.autocrlf=true` (files are CRLF on disk), re-normalize the shell scripts in `scripts/` to LF before `docker build` — CRLF breaks `find_version` at configure time with an empty `RTL_AIRBAND_VERSION`.
 
 ```bash
 # Build the image for the host architecture
