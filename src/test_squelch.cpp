@@ -78,6 +78,54 @@ TEST_F(SquelchTest, noise_floor) {
     EXPECT_LT(squelch.noise_level(), 1.01 * raw_no_signal_sample);
 }
 
+TEST_F(SquelchTest, set_noise_floor) {
+    Squelch squelch;
+    float initial = squelch.noise_level();
+
+    // non-positive levels are ignored
+    squelch.set_noise_floor(0.0f);
+    EXPECT_EQ(initial, squelch.noise_level());
+    squelch.set_noise_floor(-1.0f);
+    EXPECT_EQ(initial, squelch.noise_level());
+
+    // a positive level sets the noise floor
+    squelch.set_noise_floor(0.05f);
+    EXPECT_FLOAT_EQ(0.05f, squelch.noise_level());
+}
+
+TEST_F(SquelchTest, seeded_noise_floor_opens_on_carrier) {
+    // wideband_scan resets the squelch when a carrier is assigned and seeds the
+    // noise floor from the grid noise estimate, so a carrier at the default
+    // detection threshold (3x noise for 9.54 dB) must open the squelch
+    Squelch squelch;
+    squelch.reset();
+    const float noise = 0.05f;
+    squelch.set_noise_floor(noise);
+
+    for (int i = 0; i < 1000 && !squelch.is_open(); ++i) {
+        squelch.process_raw_sample(3.0f * noise);
+    }
+    ASSERT_TRUE(squelch.is_open());
+
+    // and stays open while the carrier is present
+    for (int i = 0; i < 1000; ++i) {
+        squelch.process_raw_sample(3.0f * noise);
+    }
+    ASSERT_TRUE(squelch.is_open());
+}
+
+TEST_F(SquelchTest, seeded_noise_floor_stays_closed_below_threshold) {
+    Squelch squelch;
+    squelch.reset();
+    const float noise = 0.05f;
+    squelch.set_noise_floor(noise);
+
+    for (int i = 0; i < 1000; ++i) {
+        squelch.process_raw_sample(2.0f * noise);
+        ASSERT_FALSE(squelch.is_open());
+    }
+}
+
 TEST_F(SquelchTest, normal_operation) {
     Squelch squelch;
 

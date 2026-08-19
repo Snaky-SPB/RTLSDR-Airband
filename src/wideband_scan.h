@@ -45,6 +45,7 @@ struct wideband_scan_state {
     int sample_rate;
     int centerfreq;
     size_t fft_size;
+    float noise_power;  // 25th percentile of the grid bin powers on the last update
     wideband_grid_point* grid;
     int* slot_freqs;
     int* new_slot_freqs;
@@ -66,5 +67,6 @@ const int* wideband_scan_slots(const wideband_scan_state* state);
 int wideband_scan_slot_count(const wideband_scan_state* state);
 int wideband_scan_grid_count(const wideband_scan_state* state);
 const wideband_grid_point* wideband_scan_grid(const wideband_scan_state* state);
+float wideband_scan_noise_power(const wideband_scan_state* state);
 
 #endif /* _WIDEBAND_SCAN_H */

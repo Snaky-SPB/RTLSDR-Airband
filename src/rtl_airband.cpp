@@ -321,6 +321,10 @@ static void wideband_set_channel_frequency(device_t* dev, int device_num, int sl
     close_channel_file_outputs(channel);
     channel->freqlist[0].frequency = freq_hz;
     channel->freqlist[0].squelch.reset();
+    // Slots only exist while a carrier is present, so the squelch's auto noise floor (which
+    // only ever decreases) would otherwise settle on the carrier itself and never open.
+    // Seed it with the grid noise estimate so the threshold stays relative to actual noise.
+    channel->freqlist[0].squelch.set_noise_floor(sqrtf(wideband_scan_noise_power(dev->wideband)));
     channel->freqlist[0].agcavgfast = 0.5f;
     channel->axcindicate = NO_SIGNAL;
 #ifdef NFM

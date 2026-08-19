@@ -137,6 +137,21 @@ void Squelch::set_squelch_snr_threshold(const float& db) {
                 normal_signal_ratio_, flappy_signal_ratio_, moving_avg_cap_);
 }
 
+void Squelch::set_noise_floor(const float& level) {
+    if (level <= 0.0f)
+        return;
+
+    noise_floor_ = level;
+
+    // Need to update moving_avg_cap_ - depends on noise_floor_
+    calculate_moving_avg_cap();
+
+    // Force squelch_level_ recalculation at next call to squelch_level() - depends on noise_floor_
+    squelch_level_ = 0.0f;
+
+    debug_print("Noise floor set to %f\n", noise_floor_);
+}
+
 void Squelch::set_ctcss_freq(const float& ctcss_freq, const float& sample_rate) {
     // create two CTCSS detectors with different window sizes.  0.4 sec is required to tell between all the "standard"
     // tones but 0.05 is enough to tell between tones ~20 Hz appart.  Will use ctcss_fast_ until there are enough samples

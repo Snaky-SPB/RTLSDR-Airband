@@ -73,6 +73,7 @@ class Squelch {
     void reset(void);
     void set_squelch_level_threshold(const float& level);
     void set_squelch_snr_threshold(const float& db);
+    void set_noise_floor(const float& level);
     void set_ctcss_freq(const float& ctcss_freq, const float& sample_rate);
 
     void process_raw_sample(const float& sample);

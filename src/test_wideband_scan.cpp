@@ -156,3 +156,22 @@ TEST_F(WidebandScanTest, update_from_fft) {
 
     wideband_scan_free(state);
 }
+
+TEST_F(WidebandScanTest, noise_power) {
+    EXPECT_FLOAT_EQ(0.0f, wideband_scan_noise_power(nullptr));
+
+    wideband_scan_state* state = wideband_scan_new(100000000, 100037500, 12.5, 2, 2400000, 100018750, 512, 10.0f);
+    ASSERT_NE(nullptr, state);
+    ASSERT_EQ(4, wideband_scan_grid_count(state));
+
+    EXPECT_FLOAT_EQ(0.0f, wideband_scan_noise_power(state));
+
+    std::vector<float> powers(4, 1.0f);
+    powers[2] = 100.0f;
+
+    wideband_scan_update(state, powers.data());
+    // 25th percentile of [1, 1, 1, 100] is 1.0, unaffected by the carrier
+    EXPECT_FLOAT_EQ(1.0f, wideband_scan_noise_power(state));
+
+    wideband_scan_free(state);
+}

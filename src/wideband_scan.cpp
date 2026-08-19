@@ -133,6 +133,7 @@ void wideband_scan_update(wideband_scan_state* state, const float* powers) {
     size_t noise_idx = (size_t)state->grid_count / 4;
     std::nth_element(state->sorted, state->sorted + noise_idx, state->sorted + state->grid_count);
     float noise = state->sorted[noise_idx];
+    state->noise_power = noise;
     float threshold = noise * (float)std::pow(10.0, state->snr_threshold_db / 10.0);
 
     for (int i = 0; i < state->grid_count; i++) {
@@ -213,4 +214,8 @@ int wideband_scan_grid_count(const wideband_scan_state* state) {
 
 const wideband_grid_point* wideband_scan_grid(const wideband_scan_state* state) {
     return state ? state->grid : NULL;
+}
+
+float wideband_scan_noise_power(const wideband_scan_state* state) {
+    return state ? state->noise_power : 0.0f;
 }
