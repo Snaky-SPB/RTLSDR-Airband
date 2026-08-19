@@ -580,6 +580,13 @@ void* demodulate(void* params) {
                         channel->waveout[j] = 0;
                     }
                     channel->axcindicate = NO_SIGNAL;
+                    if (tui) {
+                        GOTOXY(i * 10, device_num * 17 + 1);
+                        printf("          ");
+                        GOTOXY(i * 10, device_num * 17 + dev->row + 3);
+                        printf("          ");
+                        fflush(stdout);
+                    }
                     memmove(channel->wavein, channel->wavein + WAVE_BATCH, (dev->waveend - WAVE_BATCH) * sizeof(float));
                     if (channel->needs_raw_iq) {
                         memmove(channel->iq_in, channel->iq_in + 2 * WAVE_BATCH, (dev->waveend - WAVE_BATCH) * sizeof(float) * 2);
@@ -731,6 +738,10 @@ void* demodulate(void* params) {
                     } else {
                         GOTOXY(i * 10, device_num * 17 + dev->row + 3);
                         printf("%4.0f/%3.0f%c ", level_to_dBFS(fparms->squelch.signal_level()), level_to_dBFS(fparms->squelch.noise_level()), symbol);
+                    }
+                    if (dev->mode == R_WIDEBAND_SCAN) {
+                        GOTOXY(i * 10, device_num * 17 + 1);
+                        printf(" %7.3f  ", channel->freqlist[0].frequency / 1000000.0);
                     }
                     fflush(stdout);
                 }
@@ -1115,9 +1126,18 @@ int main(int argc, char* argv[]) {
         GOTOXY(0, 0);
         printf("                                                                               ");
         for (int i = 0; i < device_count; i++) {
+            if (devices[i].mode == R_WIDEBAND_SCAN && devices[i].wideband) {
+                GOTOXY(0, i * 17);
+                printf("%7.3f - %7.3f MHz  step %.1f kHz, max %d active carriers", devices[i].wideband->freq_from / 1000000.0, devices[i].wideband->freq_to / 1000000.0,
+                       devices[i].wideband->step_hz / 1000.0, devices[i].wideband->max_active);
+            }
             GOTOXY(0, i * 17 + 1);
             for (int j = 0; j < devices[i].channel_count; j++) {
-                printf(" %7.3f  ", devices[i].channels[j].freqlist[devices[i].channels[j].freq_idx].frequency / 1000000.0);
+                if (devices[i].mode == R_WIDEBAND_SCAN) {
+                    printf("          ");
+                } else {
+                    printf(" %7.3f  ", devices[i].channels[j].freqlist[devices[i].channels[j].freq_idx].frequency / 1000000.0);
+                }
             }
             if (i != device_count - 1) {
                 GOTOXY(0, i * 17 + 16);
