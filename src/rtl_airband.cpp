@@ -312,11 +312,12 @@ int next_device(demod_params_t* params, int current) {
     return params->device_start;
 }
 
-static void wideband_set_channel_frequency(device_t* dev, int slot, int freq_hz) {
+static void wideband_set_channel_frequency(device_t* dev, int device_num, int slot, int freq_hz) {
     channel_t* channel = &dev->channels[slot];
     if (freq_hz == channel->freqlist[0].frequency)
         return;
 
+    log(LOG_INFO, "dev %d slot %d: wideband carrier %.3f MHz -> %.3f MHz\n", device_num, slot, (double)channel->freqlist[0].frequency / 1e6, (double)freq_hz / 1e6);
     close_channel_file_outputs(channel);
     channel->freqlist[0].frequency = freq_hz;
     channel->freqlist[0].squelch.reset();
@@ -349,14 +350,14 @@ static void wideband_set_channel_frequency(device_t* dev, int slot, int freq_hz)
     }
 }
 
-static void wideband_apply_slots(device_t* dev) {
+static void wideband_apply_slots(device_t* dev, int device_num) {
     if (!dev->wideband)
         return;
 
     const int* slots = wideband_scan_slots(dev->wideband);
     int count = wideband_scan_slot_count(dev->wideband);
     for (int i = 0; i < count && i < dev->channel_count; i++) {
-        wideband_set_channel_frequency(dev, i, slots[i]);
+        wideband_set_channel_frequency(dev, device_num, i, slots[i]);
     }
 }
 
@@ -597,6 +598,8 @@ void* demodulate(void* params) {
                 AFC afc(dev, i);
                 freq_t* fparms = channel->freqlist + channel->freq_idx;
 
+                const bool squelch_open_prev = (channel->axcindicate != NO_SIGNAL);
+
                 // set to NO_SIGNAL, will be updated to SIGNAL based on squelch below
                 channel->axcindicate = NO_SIGNAL;
 
@@ -749,11 +752,15 @@ void* demodulate(void* params) {
                 if (channel->axcindicate != NO_SIGNAL) {
                     channel->freqlist[channel->freq_idx].active_counter++;
                 }
+                if (dev->mode == R_WIDEBAND_SCAN && (channel->axcindicate != NO_SIGNAL) != squelch_open_prev) {
+                    log(LOG_INFO, "dev %d slot %d: %.3f MHz squelch %s (signal %d, noise %d dBFS)\n", device_num, i, (double)channel->freqlist[0].frequency / 1e6,
+                        (channel->axcindicate != NO_SIGNAL) ? "opened" : "closed", (int)level_to_dBFS(fparms->squelch.signal_level()), (int)level_to_dBFS(fparms->squelch.noise_level()));
+                }
             }
 #ifndef WITH_BCM_VC
             if (dev->mode == R_WIDEBAND_SCAN && dev->wideband) {
                 wideband_scan_update_from_fft(dev->wideband, fftout);
-                wideband_apply_slots(dev);
+                wideband_apply_slots(dev, device_num);
             }
 #endif /* WITH_BCM_VC */
             if (dev->waveavail == 1) {
