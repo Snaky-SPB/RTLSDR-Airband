@@ -525,6 +525,12 @@ void process_outputs(channel_t* channel, int cur_scan_freq) {
         } else if (channel->outputs[k].type == O_FILE || channel->outputs[k].type == O_RAWFILE) {
             file_data* fdata = (file_data*)(channel->outputs[k].data);
 
+            if (channel->freqlist[channel->freq_idx].frequency == 0) {
+                close_if_necessary(&channel->outputs[k]);
+                channel->outputs[k].active = false;
+                continue;
+            }
+
             if (fdata->continuous == false && channel->axcindicate == NO_SIGNAL && channel->outputs[k].active == false) {
                 close_if_necessary(&channel->outputs[k]);
                 continue;
@@ -622,6 +628,15 @@ void disable_channel_outputs(channel_t* channel) {
             pulse_data* pdata = (pulse_data*)(output->data);
             pulse_shutdown(pdata);
 #endif /* WITH_PULSEAUDIO */
+        }
+    }
+}
+
+void close_channel_file_outputs(channel_t* channel) {
+    for (int k = 0; k < channel->output_count; k++) {
+        if (channel->outputs[k].type == O_FILE || channel->outputs[k].type == O_RAWFILE) {
+            close_file(&channel->outputs[k]);
+            channel->outputs[k].active = false;
         }
     }
 }

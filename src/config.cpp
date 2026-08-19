@@ -28,6 +28,7 @@
 #include <libconfig.h++>
 #include "input-common.h"  // input_t
 #include "rtl_airband.h"
+#include "wideband_scan.h"
 
 using namespace std;
 
@@ -728,6 +729,216 @@ static int parse_channels(libconfig::Setting& chans, device_t* dev, int i) {
     return jj;
 }
 
+static modulations parse_wideband_modulation(libconfig::Setting& cfg, int i) {
+    modulations modulation = MOD_AM;
+#ifdef NFM
+    modulation = MOD_NFM;
+#endif /* NFM */
+    if (cfg.exists("modulation")) {
+#ifdef NFM
+        if (strncmp(cfg["modulation"], "nfm", 3) == 0) {
+            modulation = MOD_NFM;
+        } else
+#endif /* NFM */
+            if (strncmp(cfg["modulation"], "am", 2) != 0) {
+                cerr << "Configuration error: devices.[" << i << "]: unknown modulation\n";
+                error();
+            }
+    }
+    return modulation;
+}
+
+static int parse_wideband_squelch(libconfig::Setting& cfg, int i, float* snr_db, float* manual_level) {
+    *snr_db = -1.0f;
+    *manual_level = 0.0f;
+
+    if (cfg.exists("squelch_threshold") && cfg.exists("squelch_snr_threshold")) {
+        cerr << "Warning: Both 'squelch_threshold' and 'squelch_snr_threshold' are set and may conflict\n";
+    }
+    if (cfg.exists("squelch_threshold")) {
+        int threshold_dBFS = (int)cfg["squelch_threshold"];
+        if (threshold_dBFS > 0) {
+            cerr << "Configuration error: devices.[" << i << "]: squelch_threshold must be less than or equal to 0\n";
+            error();
+        }
+        *manual_level = (threshold_dBFS == 0) ? 0.0f : dBFS_to_level(threshold_dBFS);
+    }
+    if (cfg.exists("squelch_snr_threshold")) {
+        float snr = (cfg["squelch_snr_threshold"].getType() == libconfig::Setting::TypeFloat) ? (float)cfg["squelch_snr_threshold"] : (int)cfg["squelch_snr_threshold"];
+        if (snr == -1.0f) {
+            snr = -1.0f;
+        } else if (snr < 0.0f) {
+            cerr << "Configuration error: devices.[" << i << "]: squelch_snr_threshold must be greater than or equal to 0\n";
+            error();
+        }
+        *snr_db = snr;
+    }
+    return 0;
+}
+
+static int parse_wideband_scan_range(device_t* dev, libconfig::Setting& cfg, int i) {
+#ifdef WITH_BCM_VC
+    cerr << "Configuration error: devices.[" << i << "]: wideband_scan is not supported with BCM VideoCore FFT\n";
+    error();
+#endif /* WITH_BCM_VC */
+
+    if (!cfg.exists("freq_from") || !cfg.exists("freq_to")) {
+        cerr << "Configuration error: devices.[" << i << "]: wideband_scan requires freq_from and freq_to\n";
+        error();
+    }
+    if (cfg.exists("channels")) {
+        cerr << "Configuration error: devices.[" << i << "]: wideband_scan uses device-level outputs, channels are not allowed\n";
+        error();
+    }
+
+    int freq_from = parse_anynum2int(cfg["freq_from"]);
+    int freq_to = parse_anynum2int(cfg["freq_to"]);
+    if (freq_from <= 0 || freq_to <= freq_from) {
+        cerr << "Configuration error: devices.[" << i << "]: freq_from must be greater than 0 and freq_to must be greater than freq_from\n";
+        error();
+    }
+
+    double step_khz = cfg.exists("channel_step") ? (double)cfg["channel_step"] : 12.5;
+    if (step_khz <= 0.0) {
+        cerr << "Configuration error: devices.[" << i << "]: channel_step must be greater than 0 (kHz)\n";
+        error();
+    }
+
+    int max_active = cfg.exists("max_active_carriers") ? (int)cfg["max_active_carriers"] : 8;
+    if (max_active < 1) {
+        cerr << "Configuration error: devices.[" << i << "]: max_active_carriers must be greater than 0\n";
+        error();
+    }
+
+    int range = freq_to - freq_from;
+    int sample_rate = dev->input->sample_rate;
+    if (!cfg.exists("sample_rate")) {
+        sample_rate = wideband_scan_sample_rate(range, WAVE_RATE);
+        if (sample_rate < 1) {
+            cerr << "Configuration error: devices.[" << i << "]: scan range is too wide for the supported sample rate\n";
+            error();
+        }
+    }
+    if (sample_rate % WAVE_RATE != 0) {
+        cerr << "Configuration error: devices.[" << i << "]: sample_rate must be a multiple of " << WAVE_RATE << " for wideband_scan\n";
+        error();
+    }
+    if ((double)range > (double)sample_rate * 0.9) {
+        cerr << "Configuration error: devices.[" << i << "]: scan range is too wide for sample_rate " << sample_rate << "\n";
+        error();
+    }
+
+    float snr_db = -1.0f;
+    float manual_level = 0.0f;
+    parse_wideband_squelch(cfg, i, &snr_db, &manual_level);
+    float detection_snr_db = (snr_db >= 0.0f) ? snr_db : 9.54f;
+
+    dev->input->sample_rate = sample_rate;
+    dev->input->centerfreq = (int)(((double)freq_from + (double)freq_to) / 2.0);
+    dev->wideband = wideband_scan_new(freq_from, freq_to, step_khz, max_active, sample_rate, dev->input->centerfreq, fft_size, detection_snr_db);
+    if (!dev->wideband) {
+        cerr << "Configuration error: devices.[" << i << "]: invalid wideband_scan range\n";
+        error();
+    }
+    return 0;
+}
+
+static int parse_wideband_scan_channels(device_t* dev, libconfig::Setting& cfg, int i) {
+    if (!dev->wideband) {
+        cerr << "Configuration error: devices.[" << i << "]: wideband_scan range is not initialized\n";
+        error();
+    }
+    if (!cfg.exists("outputs")) {
+        cerr << "Configuration error: devices.[" << i << "]: wideband_scan requires device-level outputs\n";
+        error();
+    }
+
+    libconfig::Setting& outputs = cfg["outputs"];
+    if (outputs.getLength() < 1) {
+        cerr << "Configuration error: devices.[" << i << "]: no outputs defined\n";
+        error();
+    }
+    for (int o = 0; o < outputs.getLength(); o++) {
+        if (!outputs[o].exists("type") || strncmp(outputs[o]["type"], "file", 4) != 0) {
+            cerr << "Configuration error: devices.[" << i << "] outputs.[" << o << "]: wideband_scan currently supports only file outputs\n";
+            error();
+        }
+    }
+
+    modulations modulation = parse_wideband_modulation(cfg, i);
+    float snr_db = -1.0f;
+    float manual_level = 0.0f;
+    parse_wideband_squelch(cfg, i, &snr_db, &manual_level);
+
+    int max_active = wideband_scan_slot_count(dev->wideband);
+    dev->channels = (channel_t*)XCALLOC(max_active, sizeof(channel_t));
+    dev->bins = (size_t*)XCALLOC(max_active, sizeof(size_t));
+    dev->base_bins = (size_t*)XCALLOC(max_active, sizeof(size_t));
+    dev->channel_count = 0;
+
+    for (int s = 0; s < max_active; s++) {
+        channel_t* channel = dev->channels + s;
+        for (int k = 0; k < AGC_EXTRA; k++) {
+            channel->wavein[k] = 20;
+            channel->waveout[k] = 0.5;
+        }
+        channel->axcindicate = NO_SIGNAL;
+        channel->mode = MM_MONO;
+        channel->freq_count = 1;
+        channel->freq_idx = 0;
+        channel->highpass = cfg.exists("highpass") ? (int)cfg["highpass"] : 100;
+        channel->lowpass = cfg.exists("lowpass") ? (int)cfg["lowpass"] : 2500;
+#ifdef NFM
+        channel->pr = 0;
+        channel->pj = 0;
+        channel->prev_waveout = 0.5;
+        channel->alpha = dev->alpha;
+#endif /* NFM */
+        channel->afc = 0;
+
+        if (channel->lowpass > 0 && channel->lowpass < channel->highpass) {
+            cerr << "Configuration error: devices.[" << i << "]: lowpass (" << channel->lowpass << ") must be greater than or equal to highpass (" << channel->highpass << ")\n";
+            error();
+        }
+
+        channel->freqlist = mk_freqlist(1);
+        channel->freqlist[0].frequency = 0;
+        channel->freqlist[0].modulation = modulation;
+        if (manual_level != 0.0f || cfg.exists("squelch_threshold")) {
+            channel->freqlist[0].squelch.set_squelch_level_threshold(manual_level);
+        }
+        if (snr_db >= 0.0f) {
+            channel->freqlist[0].squelch.set_squelch_snr_threshold(snr_db);
+        }
+#ifdef NFM
+        if (modulation == MOD_NFM) {
+            channel->needs_raw_iq = 1;
+        }
+#endif /* NFM */
+        if (cfg.exists("bandwidth")) {
+            int bandwidth = parse_anynum2int(cfg["bandwidth"]);
+            if (bandwidth > 0) {
+                channel->needs_raw_iq = 1;
+                channel->freqlist[0].lowpass_filter = LowpassFilter((float)bandwidth / 2, WAVE_RATE);
+            } else if (bandwidth < 0) {
+                cerr << "devices.[" << i << "]: bandwidth value '" << bandwidth << "' invalid, ignoring\n";
+            }
+        }
+
+        channel->output_count = outputs.getLength();
+        channel->outputs = (output_t*)XCALLOC(channel->output_count, sizeof(struct output_t));
+        int outputs_enabled = parse_outputs(outputs, channel, i, s, false);
+        if (outputs_enabled < 1) {
+            cerr << "Configuration error: devices.[" << i << "]: no outputs defined\n";
+            error();
+        }
+        channel->outputs = (output_t*)XREALLOC(channel->outputs, outputs_enabled * sizeof(struct output_t));
+        channel->output_count = outputs_enabled;
+        dev->channel_count++;
+    }
+    return 0;
+}
+
 int parse_devices(libconfig::Setting& devs) {
     int devcnt = 0;
     for (int i = 0; i < devs.getLength(); i++) {
@@ -761,10 +972,12 @@ int parse_devices(libconfig::Setting& devs) {
         if (devs[i].exists("mode")) {
             if (!strncmp(devs[i]["mode"], "multichannel", 12)) {
                 dev->mode = R_MULTICHANNEL;
+            } else if (!strncmp(devs[i]["mode"], "wideband_scan", 13)) {
+                dev->mode = R_WIDEBAND_SCAN;
             } else if (!strncmp(devs[i]["mode"], "scan", 4)) {
                 dev->mode = R_SCAN;
             } else {
-                cerr << "Configuration error: devices.[" << i << "]: invalid mode (must be one of: \"scan\", \"multichannel\")\n";
+                cerr << "Configuration error: devices.[" << i << "]: invalid mode (must be one of: \"scan\", \"multichannel\", \"wideband_scan\")\n";
                 error();
             }
         } else {
@@ -772,6 +985,8 @@ int parse_devices(libconfig::Setting& devs) {
         }
         if (dev->mode == R_MULTICHANNEL) {
             dev->input->centerfreq = parse_anynum2int(devs[i]["centerfreq"]);
+        } else if (dev->mode == R_WIDEBAND_SCAN) {
+            parse_wideband_scan_range(dev, devs[i], i);
         }  // centerfreq for R_SCAN will be set by parse_channels() after frequency list has been read
 #ifdef NFM
         if (devs[i].exists("tau")) {
@@ -808,28 +1023,32 @@ int parse_devices(libconfig::Setting& devs) {
         dev->waveend = dev->waveavail = dev->row = dev->tq_head = dev->tq_tail = 0;
         dev->last_frequency = -1;
 
-        libconfig::Setting& chans = devs[i]["channels"];
-        if (chans.getLength() < 1) {
-            cerr << "Configuration error: devices.[" << i << "]: no channels configured\n";
-            error();
+        if (dev->mode == R_WIDEBAND_SCAN) {
+            parse_wideband_scan_channels(dev, devs[i], i);
+        } else {
+            libconfig::Setting& chans = devs[i]["channels"];
+            if (chans.getLength() < 1) {
+                cerr << "Configuration error: devices.[" << i << "]: no channels configured\n";
+                error();
+            }
+            dev->channels = (channel_t*)XCALLOC(chans.getLength(), sizeof(channel_t));
+            dev->bins = (size_t*)XCALLOC(chans.getLength(), sizeof(size_t));
+            dev->base_bins = (size_t*)XCALLOC(chans.getLength(), sizeof(size_t));
+            dev->channel_count = 0;
+            int channel_count = parse_channels(chans, dev, i);
+            if (channel_count < 1) {
+                cerr << "Configuration error: devices.[" << i << "]: no channels enabled\n";
+                error();
+            }
+            if (dev->mode == R_SCAN && channel_count > 1) {
+                cerr << "Configuration error: devices.[" << i << "]: only one channel is allowed in scan mode\n";
+                error();
+            }
+            dev->channels = (channel_t*)XREALLOC(dev->channels, channel_count * sizeof(channel_t));
+            dev->bins = (size_t*)XREALLOC(dev->bins, channel_count * sizeof(size_t));
+            dev->base_bins = (size_t*)XREALLOC(dev->base_bins, channel_count * sizeof(size_t));
+            dev->channel_count = channel_count;
         }
-        dev->channels = (channel_t*)XCALLOC(chans.getLength(), sizeof(channel_t));
-        dev->bins = (size_t*)XCALLOC(chans.getLength(), sizeof(size_t));
-        dev->base_bins = (size_t*)XCALLOC(chans.getLength(), sizeof(size_t));
-        dev->channel_count = 0;
-        int channel_count = parse_channels(chans, dev, i);
-        if (channel_count < 1) {
-            cerr << "Configuration error: devices.[" << i << "]: no channels enabled\n";
-            error();
-        }
-        if (dev->mode == R_SCAN && channel_count > 1) {
-            cerr << "Configuration error: devices.[" << i << "]: only one channel is allowed in scan mode\n";
-            error();
-        }
-        dev->channels = (channel_t*)XREALLOC(dev->channels, channel_count * sizeof(channel_t));
-        dev->bins = (size_t*)XREALLOC(dev->bins, channel_count * sizeof(size_t));
-        dev->base_bins = (size_t*)XREALLOC(dev->base_bins, channel_count * sizeof(size_t));
-        dev->channel_count = channel_count;
         devcnt++;
     }
     return devcnt;

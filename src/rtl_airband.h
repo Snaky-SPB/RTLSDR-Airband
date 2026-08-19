@@ -278,7 +278,9 @@ struct channel_t {
     int lowpass;   // lowpass filter cutoff
 };
 
-enum rec_modes { R_MULTICHANNEL, R_SCAN };
+struct wideband_scan_state;
+
+enum rec_modes { R_MULTICHANNEL, R_SCAN, R_WIDEBAND_SCAN };
 struct device_t {
     input_t* input;
 #ifdef NFM
@@ -298,6 +300,7 @@ struct device_t {
     int row;
     int failed;
     enum rec_modes mode;
+    wideband_scan_state* wideband;
     size_t output_overrun_count;
 };
 
@@ -351,6 +354,7 @@ lame_t airlame_init(mix_modes mixmode, int highpass, int lowpass);
 void shout_setup(icecast_data* icecast, mix_modes mixmode);
 void disable_device_outputs(device_t* dev);
 void disable_channel_outputs(channel_t* channel);
+void close_channel_file_outputs(channel_t* channel);
 void* output_check_thread(void* params);
 void* output_thread(void* params);
 

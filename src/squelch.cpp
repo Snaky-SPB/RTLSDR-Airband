@@ -24,10 +24,11 @@
 #include <string.h>  // strerror()
 #endif               /* DEBUG_SQUELCH _*/
 
+#include <assert.h>   // assert()
 #include <stdlib.h>   // calloc()
 #include <algorithm>  // min()
-#include <cassert>    // assert()
 #include <cmath>      // pow()
+#include <cstring>    // memset()
 
 #include "logging.h"  // debug_print()
 
@@ -79,6 +80,35 @@ Squelch::Squelch(void) {
 
     debug_print("Created Squelch, open_delay_: %d, close_delay_: %d, low_signal_abort: %d, using_manual_level_: %s\n", open_delay_, close_delay_, low_signal_abort_,
                 using_manual_level_ ? "true" : "false");
+}
+
+void Squelch::reset(void) {
+    noise_floor_ = 5.0f;
+
+    pre_filter_ = {0.001f, 0.001f};
+    post_filter_ = {0.001f, 0.001f};
+
+    squelch_level_ = 0.0f;
+
+    using_post_filter_ = false;
+
+    next_state_ = CLOSED;
+    current_state_ = CLOSED;
+
+    delay_ = 0;
+    open_count_ = 0;
+    sample_count_ = -1;
+    flappy_count_ = 0;
+    low_signal_count_ = 0;
+    recent_open_count_ = 0;
+    closed_sample_count_ = 0;
+
+    buffer_head_ = 0;
+    buffer_tail_ = 1;
+    memset(buffer_, 0, buffer_size_ * sizeof(float));
+
+    ctcss_fast_.reset();
+    ctcss_slow_.reset();
 }
 
 void Squelch::set_squelch_level_threshold(const float& level) {

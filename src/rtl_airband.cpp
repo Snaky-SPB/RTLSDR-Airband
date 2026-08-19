@@ -63,6 +63,7 @@
 #include "logging.h"
 #include "rtl_airband.h"
 #include "squelch.h"
+#include "wideband_scan.h"
 
 #ifdef WITH_PROFILING
 #include "gperftools/profiler.h"
@@ -311,6 +312,54 @@ int next_device(demod_params_t* params, int current) {
     return params->device_start;
 }
 
+static void wideband_set_channel_frequency(device_t* dev, int slot, int freq_hz) {
+    channel_t* channel = &dev->channels[slot];
+    if (freq_hz == channel->freqlist[0].frequency)
+        return;
+
+    close_channel_file_outputs(channel);
+    channel->freqlist[0].frequency = freq_hz;
+    channel->freqlist[0].squelch.reset();
+    channel->freqlist[0].agcavgfast = 0.5f;
+    channel->axcindicate = NO_SIGNAL;
+#ifdef NFM
+    channel->pr = 0;
+    channel->pj = 0;
+    channel->prev_waveout = 0;
+#endif /* NFM */
+    channel->dm_phi = 0;
+    if (freq_hz == 0) {
+        dev->bins[slot] = dev->base_bins[slot] = 0;
+        channel->dm_dphi = 0;
+        return;
+    }
+
+    dev->base_bins[slot] = dev->bins[slot] = wideband_frequency_to_bin(freq_hz, dev->input->centerfreq, dev->input->sample_rate, fft_size);
+    if (channel->needs_raw_iq) {
+        double dm_dphi = (double)(freq_hz - dev->input->centerfreq);
+        double decimation_factor = ((double)dev->input->sample_rate / (double)WAVE_RATE);
+        double dm_dphi_correction = (double)WAVE_RATE / 2.0;
+        dm_dphi_correction *= (decimation_factor - round(decimation_factor));
+        dm_dphi_correction *= (double)(freq_hz - dev->input->centerfreq) / ((double)dev->input->sample_rate / 2.0);
+        dm_dphi -= dm_dphi_correction;
+        dm_dphi /= (double)WAVE_RATE;
+        dm_dphi -= trunc(dm_dphi);
+        dm_dphi *= 256.0 * 65536.0;
+        channel->dm_dphi = (uint32_t)((int)dm_dphi);
+    }
+}
+
+static void wideband_apply_slots(device_t* dev) {
+    if (!dev->wideband)
+        return;
+
+    const int* slots = wideband_scan_slots(dev->wideband);
+    int count = wideband_scan_slot_count(dev->wideband);
+    for (int i = 0; i < count && i < dev->channel_count; i++) {
+        wideband_set_channel_frequency(dev, i, slots[i]);
+    }
+}
+
 void* demodulate(void* params) {
     assert(params != NULL);
     demod_params_t* demod_params = (demod_params_t*)params;
@@ -509,6 +558,10 @@ void* demodulate(void* params) {
         }
 #else
         for (int j = 0; j < dev->channel_count; j++) {
+            if (dev->mode == R_WIDEBAND_SCAN && dev->channels[j].freqlist[0].frequency == 0) {
+                dev->channels[j].wavein[dev->waveend] = 0;
+                continue;
+            }
             dev->channels[j].wavein[dev->waveend] = sqrtf(fftout[dev->bins[j]][0] * fftout[dev->bins[j]][0] + fftout[dev->bins[j]][1] * fftout[dev->bins[j]][1]);
             if (dev->channels[j].needs_raw_iq) {
                 dev->channels[j].iq_in[2 * dev->waveend] = fftout[dev->bins[j]][0];
@@ -521,8 +574,20 @@ void* demodulate(void* params) {
 
         if (dev->waveend >= WAVE_BATCH + AGC_EXTRA) {
             for (int i = 0; i < dev->channel_count; i++) {
-                AFC afc(dev, i);
                 channel_t* channel = dev->channels + i;
+                if (dev->mode == R_WIDEBAND_SCAN && channel->freqlist[0].frequency == 0) {
+                    for (int j = AGC_EXTRA; j < WAVE_BATCH + AGC_EXTRA; j++) {
+                        channel->waveout[j] = 0;
+                    }
+                    channel->axcindicate = NO_SIGNAL;
+                    memmove(channel->wavein, channel->wavein + WAVE_BATCH, (dev->waveend - WAVE_BATCH) * sizeof(float));
+                    if (channel->needs_raw_iq) {
+                        memmove(channel->iq_in, channel->iq_in + 2 * WAVE_BATCH, (dev->waveend - WAVE_BATCH) * sizeof(float) * 2);
+                    }
+                    continue;
+                }
+
+                AFC afc(dev, i);
                 freq_t* fparms = channel->freqlist + channel->freq_idx;
 
                 // set to NO_SIGNAL, will be updated to SIGNAL based on squelch below
@@ -674,6 +739,12 @@ void* demodulate(void* params) {
                     channel->freqlist[channel->freq_idx].active_counter++;
                 }
             }
+#ifndef WITH_BCM_VC
+            if (dev->mode == R_WIDEBAND_SCAN && dev->wideband) {
+                wideband_scan_update_from_fft(dev->wideband, fftout);
+                wideband_apply_slots(dev);
+            }
+#endif /* WITH_BCM_VC */
             if (dev->waveavail == 1) {
                 debug_print("devices[%d]: output channel overrun\n", device_num);
                 dev->output_overrun_count++;
@@ -1152,6 +1223,8 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < device_count; i++) {
         device_t* dev = devices + i;
         disable_device_outputs(dev);
+        wideband_scan_free(dev->wideband);
+        dev->wideband = NULL;
     }
 
     for (int i = 0; i < device_count; i++) {
