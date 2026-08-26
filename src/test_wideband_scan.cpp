@@ -157,6 +157,66 @@ TEST_F(WidebandScanTest, update_from_fft) {
     wideband_scan_free(state);
 }
 
+TEST_F(WidebandScanTest, exclude_validation) {
+    EXPECT_EQ(-1, wideband_scan_exclude(nullptr, 100000000));
+
+    wideband_scan_state* state = wideband_scan_new(100000000, 100037500, 12.5, 2, 2400000, 100018750, 512, 10.0f);
+    ASSERT_NE(nullptr, state);
+    EXPECT_EQ(-1, wideband_scan_exclude(state, 99999999));
+    EXPECT_EQ(-1, wideband_scan_exclude(state, 100037501));
+    EXPECT_EQ(0, wideband_scan_exclude(state, 100000000));
+    EXPECT_EQ(0, wideband_scan_exclude(state, 100037500));
+    EXPECT_EQ(0, wideband_scan_exclude(state, 100037499));
+
+    const wideband_grid_point* grid = wideband_scan_grid(state);
+    EXPECT_TRUE(grid[0].excluded);
+    EXPECT_TRUE(grid[3].excluded);
+
+    wideband_scan_free(state);
+}
+
+TEST_F(WidebandScanTest, exclude_rounds_to_nearest_grid_point) {
+    // grid: 100000000, 100012500, 100025000, 100037500 (step 12500 Hz)
+    wideband_scan_state* state = wideband_scan_new(100000000, 100037500, 12.5, 2, 2400000, 100018750, 512, 10.0f);
+    ASSERT_NE(nullptr, state);
+
+    EXPECT_EQ(0, wideband_scan_exclude(state, 100006000));  // 6 kHz from grid[0], 6.5 kHz from grid[1]
+    EXPECT_EQ(0, wideband_scan_exclude(state, 100016000));  // 3.5 kHz from grid[1], 9 kHz from grid[2]
+
+    const wideband_grid_point* grid = wideband_scan_grid(state);
+    EXPECT_TRUE(grid[0].excluded);
+    EXPECT_TRUE(grid[1].excluded);
+    EXPECT_FALSE(grid[2].excluded);
+    EXPECT_FALSE(grid[3].excluded);
+
+    wideband_scan_free(state);
+}
+
+TEST_F(WidebandScanTest, excluded_carrier_never_assigned) {
+    wideband_scan_state* state = wideband_scan_new(100000000, 100037500, 12.5, 2, 2400000, 100018750, 512, 10.0f);
+    ASSERT_NE(nullptr, state);
+    ASSERT_EQ(0, wideband_scan_exclude(state, 100025000));
+
+    std::vector<float> powers(4, 1.0f);
+    powers[0] = 10.0f;
+    powers[2] = 100.0f;  // strongest carrier, but blacklisted
+
+    for (int update = 0; update < 3; update++) {
+        wideband_scan_update(state, powers.data());
+    }
+
+    const wideband_grid_point* grid = wideband_scan_grid(state);
+    const int* slots = wideband_scan_slots(state);
+    EXPECT_FALSE(grid[2].above);
+    EXPECT_EQ(0, grid[2].above_count);
+    EXPECT_EQ(grid[0].freq, slots[0]);
+    EXPECT_EQ(0, slots[1]);
+    // excluded bin still counts toward the noise percentile
+    EXPECT_FLOAT_EQ(1.0f, wideband_scan_noise_power(state));
+
+    wideband_scan_free(state);
+}
+
 TEST_F(WidebandScanTest, noise_power) {
     EXPECT_FLOAT_EQ(0.0f, wideband_scan_noise_power(nullptr));
 

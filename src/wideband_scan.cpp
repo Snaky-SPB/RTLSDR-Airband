@@ -125,6 +125,20 @@ void wideband_scan_free(wideband_scan_state* state) {
     free(state);
 }
 
+int wideband_scan_exclude(wideband_scan_state* state, int freq_hz) {
+    if (!state || freq_hz < state->freq_from || freq_hz > state->freq_to)
+        return -1;
+
+    // Round to the nearest grid point; the grid covers [freq_from, freq_to], so the clamps only guard against float edges.
+    int idx = (int)std::round(((double)freq_hz - (double)state->freq_from) / state->step_hz);
+    if (idx < 0)
+        idx = 0;
+    if (idx >= state->grid_count)
+        idx = state->grid_count - 1;
+    state->grid[idx].excluded = true;
+    return 0;
+}
+
 void wideband_scan_update(wideband_scan_state* state, const float* powers) {
     if (!state || !powers || state->grid_count < 1 || state->slot_count < 1)
         return;
@@ -138,7 +152,7 @@ void wideband_scan_update(wideband_scan_state* state, const float* powers) {
 
     for (int i = 0; i < state->grid_count; i++) {
         state->grid[i].power = powers[i];
-        bool above = (threshold > 0.0f && powers[i] >= threshold);
+        bool above = !state->grid[i].excluded && (threshold > 0.0f && powers[i] >= threshold);
         state->grid[i].above = above;
         state->grid[i].above_count = above ? state->grid[i].above_count + 1 : 0;
     }

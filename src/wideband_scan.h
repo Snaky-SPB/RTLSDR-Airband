@@ -30,6 +30,7 @@ struct wideband_grid_point {
     int above_count;    // consecutive updates above the detection threshold
     int missing_count;  // consecutive updates where the carrier was below threshold or not assigned
     bool above;         // above the detection threshold on the last update
+    bool excluded;      // blacklisted: never detected, never assigned to a slot
 };
 
 struct wideband_scan_state {
@@ -57,6 +58,7 @@ struct wideband_scan_state {
 
 wideband_scan_state* wideband_scan_new(int freq_from_hz, int freq_to_hz, double step_khz, int max_active, int sample_rate, int centerfreq, size_t fft_size, float snr_threshold_db);
 void wideband_scan_free(wideband_scan_state* state);
+int wideband_scan_exclude(wideband_scan_state* state, int freq_hz);
 
 int wideband_scan_sample_rate(int range_hz, int wave_rate);
 size_t wideband_frequency_to_bin(int freq_hz, int centerfreq_hz, int sample_rate, size_t fft_size);

@@ -842,6 +842,18 @@ static int parse_wideband_scan_range(device_t* dev, libconfig::Setting& cfg, int
         cerr << "Configuration error: devices.[" << i << "]: invalid wideband_scan range\n";
         error();
     }
+
+    if (cfg.exists("freq_blacklist")) {
+        libconfig::Setting& blacklist = cfg["freq_blacklist"];
+        for (int b = 0; b < blacklist.getLength(); b++) {
+            int freq = parse_anynum2int(blacklist[b]);
+            if (freq < freq_from || freq > freq_to) {
+                cerr << "Warning: devices.[" << i << "]: freq_blacklist " << freq << " is outside the scan range, ignored\n";
+            } else {
+                wideband_scan_exclude(dev->wideband, freq);
+            }
+        }
+    }
     return 0;
 }
 
