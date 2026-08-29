@@ -177,7 +177,7 @@ SDR device (input-*.cpp)
 | `src/config.cpp` | libconfig++ parsing for devices, channels, mixers, outputs |
 | `src/output-common.cpp/h` | Common output: per-type dispatch (`process_outputs`/`disable_channel_outputs`), output threads, stats file |
 | `src/output-icecast.cpp/h` | Icecast output: libshout connection, MP3 encode + send, reconnect |
-| `src/output-file.cpp/h` | File output (mp3/raw) lifecycle: filename/timestamp, open/append (discontinuity tones `discontinuity_tone`, default on), per-batch write, close policy (hour/split), lametag flush |
+| `src/output-file.cpp/h` | File output (mp3/raw) lifecycle: filename/timestamp, open/append (discontinuity tones `discontinuity_tone`, default on), per-batch write, close policy (hour/split), lametag flush. With `split_on_transmission`, each activity's audio is buffered in `file_data::audio_buf` until it outlives `split_min_file_time` (short bursts never create a file); the file is then created and named after the activity start, rotated after `split_max_file_time` (from file creation), and closed on `split_max_idle_time` of silence. Slot retune/release (`close_channel_file_outputs`) drops the buffered activity. |
 | `src/output-udp.cpp/h` | UDP stream output (raw 32-bit float audio) |
 | `src/output-pulse.cpp/h` | PulseAudio output (optional, `PULSEAUDIO` CMake flag) |
 | `src/mixer.cpp` | Multi-channel mixer with ampfactor/balance |

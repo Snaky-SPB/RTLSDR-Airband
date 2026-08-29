@@ -254,11 +254,8 @@ void close_file(output_t* output) {
 }
 
 /*
- * Close current output file based on certain conditions:
- * If "split_on_transmission" mode is true check:
- *   If current duration too long, or we've been idle too long
- * else (append or continuous) check:
- *   if hour is different.
+ * Close the current output file if the hour boundary was crossed (append/continuous
+ * mode). Split mode close conditions are handled in file_write.
  */
 void close_if_necessary(output_t* output) {
     file_data* fdata = (file_data*)(output->data);
@@ -269,17 +266,6 @@ void close_if_necessary(output_t* output) {
 
     timeval current_time;
     gettimeofday(&current_time, NULL);
-
-    if (fdata->split_on_transmission) {
-        double duration_sec = delta_sec(&fdata->open_time, &current_time);
-        double idle_sec = delta_sec(&fdata->last_write_time, &current_time);
-
-        if (should_close_split_file(duration_sec, idle_sec, fdata->split_min_file_time, fdata->split_max_file_time, fdata->split_max_idle_time)) {
-            debug_print("closing file %s, duration %f sec, idle %f sec\n", fdata->file_path.c_str(), duration_sec, idle_sec);
-            close_file(output);
-        }
-        return;
-    }
 
     // Check if the hour boundary was just crossed.  NOTE: Actual hour number doesn't matter but still
     // need to use localtime if enabled (some timezones have partial hour offsets)
@@ -321,11 +307,14 @@ bool output_file_ready(channel_t* channel, output_t* output) {
 
     timeval current_time;
     gettimeofday(&current_time, NULL);
+    // split files are named after the activity start, which precedes file creation by
+    // split_min_file_time (the buffered interval)
+    const timeval& name_time = (fdata->split_on_transmission) ? fdata->activity_start : current_time;
     struct tm* time;
     if (use_localtime) {
-        time = localtime(&current_time.tv_sec);
+        time = localtime(&name_time.tv_sec);
     } else {
-        time = gmtime(&current_time.tv_sec);
+        time = gmtime(&name_time.tv_sec);
     }
 
     char timestamp[32];
@@ -369,33 +358,18 @@ bool output_file_ready(channel_t* channel, output_t* output) {
 }
 
 /*
- * Write one batch of samples to a file output (mp3 or raw IQ).
+ * Encode (mp3) and write one batch of samples to the open output file.
+ * `samples` is the batch: waveout for O_FILE (left channel; `right` is waveout_r for
+ * stereo, NULL otherwise) or iq_out for O_RAWFILE.
  * Returns 0 on success, -1 if the output was disabled due to an error.
  */
-int file_write(channel_t* channel, output_t* output) {
+static int write_batch(output_t* output, const float* samples, const float* right) {
     file_data* fdata = (file_data*)(output->data);
-
-    if (channel->freqlist[channel->freq_idx].frequency == 0) {
-        close_if_necessary(output);
-        output->active = false;
-        return 0;
-    }
-
-    if (fdata->continuous == false && channel->axcindicate == NO_SIGNAL && output->active == false) {
-        close_if_necessary(output);
-        return 0;
-    }
-
-    if (!output_file_ready(channel, output)) {
-        log(LOG_WARNING, "Output disabled\n");
-        output->enabled = false;
-        return -1;
-    }
 
     // encode mp3 bytes if O_FILE
     int mp3_bytes = 0;
     if (output->type == O_FILE) {
-        mp3_bytes = lame_encode_buffer_ieee_float(output->lame, channel->waveout, (channel->mode == MM_STEREO ? channel->waveout_r : NULL), WAVE_BATCH, output->lamebuf, LAMEBUF_SIZE);
+        mp3_bytes = lame_encode_buffer_ieee_float(output->lame, samples, right, WAVE_BATCH, output->lamebuf, LAMEBUF_SIZE);
         if (mp3_bytes < 0) {
             log(LOG_WARNING, "lame_encode_buffer_ieee_float: %d\n", mp3_bytes);
         }
@@ -411,7 +385,7 @@ int file_write(channel_t* channel, output_t* output) {
         written = fwrite(output->lamebuf, 1, buflen, fdata->f);
     } else {
         buflen = 2 * sizeof(float) * WAVE_BATCH;
-        written = fwrite(channel->iq_out, 1, buflen, fdata->f);
+        written = fwrite(samples, 1, buflen, fdata->f);
     }
     if (written < buflen) {
         if (ferror(fdata->f))
@@ -422,8 +396,137 @@ int file_write(channel_t* channel, output_t* output) {
         output->enabled = false;
         return -1;
     }
-    output->active = (channel->axcindicate != NO_SIGNAL);
-    gettimeofday(&fdata->last_write_time, NULL);
+    return 0;
+}
+
+/*
+ * Create the split output file (named after the activity start) and write the
+ * buffered audio into it.
+ * Returns 0 on success, -1 if the output was disabled due to an error.
+ */
+static int split_open_and_flush(channel_t* channel, output_t* output) {
+    file_data* fdata = (file_data*)(output->data);
+
+    if (!output_file_ready(channel, output)) {
+        log(LOG_WARNING, "Output disabled\n");
+        output->enabled = false;
+        return -1;
+    }
+
+    const size_t per_batch = (output->type == O_FILE && channel->mode == MM_MONO) ? WAVE_BATCH : 2 * WAVE_BATCH;
+    for (size_t off = 0; off < fdata->audio_buf.size(); off += per_batch) {
+        // in the buffer stereo channels are stored back to back
+        const float* right = (output->type == O_FILE && channel->mode == MM_STEREO) ? (&fdata->audio_buf[off + WAVE_BATCH]) : NULL;
+        int rc = write_batch(output, &fdata->audio_buf[off], right);
+        if (rc < 0) {
+            return rc;
+        }
+    }
+    fdata->audio_buf.clear();
+    return 0;
+}
+
+/*
+ * Write one batch of samples to a file output (mp3 or raw IQ).
+ *
+ * In split_on_transmission mode the audio of an activity is buffered until it outlives
+ * split_min_file_time, so that short bursts (clicks, interference) do not create files:
+ *   - audio batch, no file yet: buffer; create the file once the buffer reaches min
+ *   - audio batch, file open: write; rotate the file when it outlives max
+ *   - silence beyond split_max_idle_time: end of activity - close the file if it was
+ *     created, otherwise discard the buffered short activity
+ * Returns 0 on success, -1 if the output was disabled due to an error.
+ */
+int file_write(channel_t* channel, output_t* output) {
+    file_data* fdata = (file_data*)(output->data);
+    timeval now;
+    gettimeofday(&now, NULL);
+
+    if (channel->freqlist[channel->freq_idx].frequency == 0) {
+        // no carrier on this (wideband) slot: nothing to record, drop the activity state
+        if (fdata->f) {
+            close_file(output);
+        }
+        fdata->audio_buf.clear();
+        fdata->activity_active = false;
+        output->active = false;
+        return 0;
+    }
+
+    if (!fdata->split_on_transmission) {
+        if (fdata->continuous == false && channel->axcindicate == NO_SIGNAL && output->active == false) {
+            close_if_necessary(output);
+            return 0;
+        }
+
+        if (!output_file_ready(channel, output)) {
+            log(LOG_WARNING, "Output disabled\n");
+            output->enabled = false;
+            return -1;
+        }
+
+        const float* batch = (output->type == O_FILE) ? channel->waveout : channel->iq_out;
+        const float* right = (output->type == O_FILE && channel->mode == MM_STEREO) ? channel->waveout_r : NULL;
+        if (write_batch(output, batch, right) < 0) {
+            return -1;
+        }
+        output->active = (channel->axcindicate != NO_SIGNAL);
+        fdata->last_write_time = now;
+        return 0;
+    }
+
+    if (channel->axcindicate != NO_SIGNAL) {
+        if (!fdata->activity_active) {
+            fdata->activity_active = true;
+            fdata->activity_start = now;
+        }
+        fdata->last_write_time = now;
+        output->active = true;
+
+        const float* batch = (output->type == O_FILE) ? channel->waveout : channel->iq_out;
+        const float* right = (output->type == O_FILE && channel->mode == MM_STEREO) ? channel->waveout_r : NULL;
+
+        if (!fdata->f) {
+            // no file yet: buffer the batch until the activity outlives split_min_file_time,
+            // then create the file and flush the buffer (which includes this batch)
+            const size_t left_len = (output->type == O_RAWFILE) ? 2 * WAVE_BATCH : WAVE_BATCH;
+            const size_t per_batch = left_len + (right ? WAVE_BATCH : 0);
+            fdata->audio_buf.insert(fdata->audio_buf.end(), batch, batch + left_len);
+            if (right) {
+                fdata->audio_buf.insert(fdata->audio_buf.end(), right, right + WAVE_BATCH);
+            }
+            double buf_sec = (double)(fdata->audio_buf.size() / per_batch) * WAVE_BATCH / WAVE_RATE;
+            if (buf_sec >= fdata->split_min_file_time) {
+                if (split_open_and_flush(channel, output) < 0) {
+                    return -1;
+                }
+            }
+            return 0;
+        }
+
+        // file is open: write directly, no buffering
+        // rotation: a file outliving split_max_file_time is replaced by a new one
+        if (delta_sec(&fdata->open_time, &now) > fdata->split_max_file_time) {
+            close_file(output);
+            fdata->activity_start = now;
+            if (!output_file_ready(channel, output)) {
+                log(LOG_WARNING, "Output disabled\n");
+                output->enabled = false;
+                return -1;
+            }
+        }
+        return write_batch(output, batch, right);
+    }
+
+    if (fdata->activity_active && delta_sec(&fdata->last_write_time, &now) > fdata->split_max_idle_time) {
+        if (fdata->f) {
+            debug_print("closing file %s after idle %f sec\n", fdata->file_path.c_str(), delta_sec(&fdata->last_write_time, &now));
+            close_file(output);
+        }
+        fdata->audio_buf.clear();
+        fdata->activity_active = false;
+    }
+    output->active = false;
     return 0;
 }
 
@@ -432,6 +535,12 @@ void close_channel_file_outputs(channel_t* channel) {
         if (channel->outputs[k].type == O_FILE || channel->outputs[k].type == O_RAWFILE) {
             close_file(&channel->outputs[k]);
             channel->outputs[k].active = false;
+            file_data* fdata = (file_data*)(channel->outputs[k].data);
+            if (fdata) {
+                // slot is being retuned or released: drop the in-progress activity
+                fdata->audio_buf.clear();
+                fdata->activity_active = false;
+            }
         }
     }
 }

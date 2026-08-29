@@ -32,7 +32,6 @@ bool file_exists(const std::string& file_path);
 bool make_dir(const std::string& dir_path);
 bool make_subdirs(const std::string& basedir, const std::string& subdirs);
 std::string make_dated_subdirs(const std::string& basedir, const struct tm* time);
-bool should_close_split_file(double duration_sec, double idle_sec, double split_min_file_time, double split_max_file_time, double split_max_idle_time);
 bool valid_split_file_times(double split_min_file_time, double split_max_file_time, double split_max_idle_time);
 bool setting_as_double(const libconfig::Setting& setting, double* value);
 

@@ -971,7 +971,7 @@ int main(int argc, char* argv[]) {
             }
         }
         if (!valid_split_file_times(split_min_file_time, split_max_file_time, split_max_idle_time)) {
-            cerr << "Configuration error: invalid split file time settings (need split_min_file_time >= 1.0, split_max_file_time > split_min_file_time, split_max_idle_time > 0)\n";
+            cerr << "Configuration error: invalid split file time settings (need split_min_file_time >= 1.0, split_max_file_time >= 1.0, split_max_idle_time > 0)\n";
             error();
         }
 #ifdef NFM

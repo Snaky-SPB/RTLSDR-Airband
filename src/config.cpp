@@ -35,6 +35,7 @@ using namespace std;
 
 // resolve per-output split file time settings, falling back to the global values
 static void parse_split_file_times(libconfig::Setting& out, file_data* fdata) {
+    fdata->activity_active = false;
     fdata->split_min_file_time = split_min_file_time;
     fdata->split_max_file_time = split_max_file_time;
     fdata->split_max_idle_time = split_max_idle_time;
@@ -52,7 +53,7 @@ static void parse_split_file_times(libconfig::Setting& out, file_data* fdata) {
         error();
     }
     if (!valid_split_file_times(fdata->split_min_file_time, fdata->split_max_file_time, fdata->split_max_idle_time)) {
-        cerr << "Configuration error: invalid split file time settings (need split_min_file_time >= 1.0, split_max_file_time > split_min_file_time, split_max_idle_time > 0)\n";
+        cerr << "Configuration error: invalid split file time settings (need split_min_file_time >= 1.0, split_max_file_time >= 1.0, split_max_idle_time > 0)\n";
         error();
     }
 }

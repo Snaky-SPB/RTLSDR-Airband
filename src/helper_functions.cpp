@@ -86,14 +86,12 @@ string make_dated_subdirs(const string& basedir, const struct tm* time) {
     return "";
 }
 
-bool should_close_split_file(double duration_sec, double idle_sec, double split_min_file_time, double split_max_file_time, double split_max_idle_time) {
-    return (duration_sec > split_max_file_time) || (duration_sec > split_min_file_time && idle_sec > split_max_idle_time);
-}
-
-// min must be >= 1.0: split file names carry a 1-second-resolution timestamp and a file can only
-// close on idle once it has been open longer than the min, so this keeps consecutive names unique
+// min and max must be >= 1.0: split file names carry a 1-second-resolution timestamp and
+// consecutive file creations are at least that far apart (min + max_idle between activities,
+// max between rotations), so this keeps consecutive names unique. max (file rotation) is
+// measured from file creation, so it needs no relation to min.
 bool valid_split_file_times(double split_min_file_time, double split_max_file_time, double split_max_idle_time) {
-    return (split_min_file_time >= 1.0) && (split_max_file_time > split_min_file_time) && (split_max_idle_time > 0.0);
+    return (split_min_file_time >= 1.0) && (split_max_file_time >= 1.0) && (split_max_idle_time > 0.0);
 }
 
 bool setting_as_double(const libconfig::Setting& setting, double* value) {

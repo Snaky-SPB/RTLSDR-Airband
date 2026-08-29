@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <libconfig.h++>
 #include <string>
+#include <vector>
 
 #include "config.h"
 
@@ -145,6 +146,11 @@ struct file_data {
     bool discontinuity_tone;
     timeval open_time;
     timeval last_write_time;
+    // split_on_transmission: audio of the in-progress activity, buffered until it outlives
+    // split_min_file_time (batches: mono — WAVE_BATCH floats, stereo/iq — 2*WAVE_BATCH)
+    std::vector<float> audio_buf;
+    bool activity_active;
+    timeval activity_start;
     FILE* f;
     enum output_type type;
 };

@@ -168,34 +168,6 @@ TEST_F(HelperFunctionsTest, make_dated_subdirs_some_exist) {
     EXPECT_TRUE(dir_exists(dir_through_month + "08"));
 }
 
-TEST_F(HelperFunctionsTest, should_close_split_file_max_duration) {
-    EXPECT_TRUE(should_close_split_file(6001.0, 0.0, 1.0, 6000.0, 0.5));
-}
-
-TEST_F(HelperFunctionsTest, should_close_split_file_duration_at_max) {
-    EXPECT_FALSE(should_close_split_file(6000.0, 0.0, 1.0, 6000.0, 0.5));
-}
-
-TEST_F(HelperFunctionsTest, should_close_split_file_idle_after_min_duration) {
-    EXPECT_TRUE(should_close_split_file(10.0, 0.6, 1.0, 6000.0, 0.5));
-}
-
-TEST_F(HelperFunctionsTest, should_close_split_file_idle_at_max) {
-    EXPECT_FALSE(should_close_split_file(10.0, 0.5, 1.0, 6000.0, 0.5));
-}
-
-TEST_F(HelperFunctionsTest, should_close_split_file_idle_before_min_duration) {
-    EXPECT_FALSE(should_close_split_file(0.5, 10.0, 1.0, 6000.0, 0.5));
-}
-
-TEST_F(HelperFunctionsTest, should_close_split_file_duration_at_min) {
-    EXPECT_FALSE(should_close_split_file(1.0, 10.0, 1.0, 6000.0, 0.5));
-}
-
-TEST_F(HelperFunctionsTest, should_close_split_file_no_idle) {
-    EXPECT_FALSE(should_close_split_file(10.0, 0.1, 1.0, 6000.0, 0.5));
-}
-
 TEST_F(HelperFunctionsTest, valid_split_file_times_ok) {
     EXPECT_TRUE(valid_split_file_times(1.0, 60.0, 0.5));
 }
@@ -204,9 +176,17 @@ TEST_F(HelperFunctionsTest, valid_split_file_times_min_too_small) {
     EXPECT_FALSE(valid_split_file_times(0.5, 60.0, 0.5));
 }
 
-TEST_F(HelperFunctionsTest, valid_split_file_times_max_not_greater) {
-    EXPECT_FALSE(valid_split_file_times(60.0, 60.0, 0.5));
-    EXPECT_FALSE(valid_split_file_times(60.0, 30.0, 0.5));
+// max is measured from file creation, not activity start, so it may be <= min
+TEST_F(HelperFunctionsTest, valid_split_file_times_max_le_min_ok) {
+    EXPECT_TRUE(valid_split_file_times(60.0, 60.0, 0.5));
+    EXPECT_TRUE(valid_split_file_times(60.0, 30.0, 0.5));
+}
+
+// below 1 second two rotation files would share a name (1-second timestamps)
+TEST_F(HelperFunctionsTest, valid_split_file_times_max_below_one_second) {
+    EXPECT_FALSE(valid_split_file_times(1.0, 0.9, 0.5));
+    EXPECT_FALSE(valid_split_file_times(1.0, 0.0, 0.5));
+    EXPECT_FALSE(valid_split_file_times(1.0, -1.0, 0.5));
 }
 
 TEST_F(HelperFunctionsTest, valid_split_file_times_idle_not_positive) {
