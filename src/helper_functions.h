@@ -23,11 +23,17 @@
 #include <ctime>  // struct tm
 #include <string>
 
+namespace libconfig {
+class Setting;
+}
+
 bool dir_exists(const std::string& dir_path);
 bool file_exists(const std::string& file_path);
 bool make_dir(const std::string& dir_path);
 bool make_subdirs(const std::string& basedir, const std::string& subdirs);
 std::string make_dated_subdirs(const std::string& basedir, const struct tm* time);
-bool should_close_transmission_file(double duration_sec, double idle_sec, double min_transmission_time, double max_transmission_time, double max_transmission_idle);
+bool should_close_split_file(double duration_sec, double idle_sec, double split_min_file_time, double split_max_file_time, double split_max_idle_time);
+bool valid_split_file_times(double split_min_file_time, double split_max_file_time, double split_max_idle_time);
+bool setting_as_double(const libconfig::Setting& setting, double* value);
 
 #endif /* _HELPER_FUNCTIONS_H */

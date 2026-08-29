@@ -274,7 +274,7 @@ void close_if_necessary(output_t* output) {
         double duration_sec = delta_sec(&fdata->open_time, &current_time);
         double idle_sec = delta_sec(&fdata->last_write_time, &current_time);
 
-        if (should_close_transmission_file(duration_sec, idle_sec, min_transmission_time, max_transmission_time, max_transmission_idle)) {
+        if (should_close_split_file(duration_sec, idle_sec, fdata->split_min_file_time, fdata->split_max_file_time, fdata->split_max_idle_time)) {
             debug_print("closing file %s, duration %f sec, idle %f sec\n", fdata->file_path.c_str(), duration_sec, idle_sec);
             close_file(output);
         }

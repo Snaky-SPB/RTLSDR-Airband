@@ -59,6 +59,7 @@
 #include <ctime>
 #include <iostream>
 #include <libconfig.h++>
+#include "helper_functions.h"
 #include "input-common.h"
 #include "logging.h"
 #include "output-common.h"
@@ -89,9 +90,9 @@ bool multiple_demod_threads = false;
 bool multiple_output_threads = false;
 bool log_scan_activity = false;
 char* stats_filepath = NULL;
-double min_transmission_time = 1.0;
-double max_transmission_time = 60.0 * 60.0;
-double max_transmission_idle = 0.5;
+double split_min_file_time = 1.0;
+double split_max_file_time = 60.0 * 60.0;
+double split_max_idle_time = 0.5;
 size_t fft_size_log = DEFAULT_FFT_SIZE_LOG;
 size_t fft_size = 1 << fft_size_log;
 
@@ -951,14 +952,26 @@ int main(int argc, char* argv[]) {
             log_scan_activity = true;
         if (root.exists("stats_filepath"))
             stats_filepath = strdup(root["stats_filepath"]);
-        if (root.exists("min_transmission_time"))
-            min_transmission_time = (double)(root["min_transmission_time"]);
-        if (root.exists("max_transmission_time"))
-            max_transmission_time = (double)(root["max_transmission_time"]);
-        if (root.exists("max_transmission_idle"))
-            max_transmission_idle = (double)(root["max_transmission_idle"]);
-        if (min_transmission_time <= 0.0 || max_transmission_time <= min_transmission_time || max_transmission_idle <= 0.0) {
-            cerr << "Configuration error: invalid split_on_transmission settings (need min_transmission_time > 0, max_transmission_time > min_transmission_time, max_transmission_idle > 0)\n";
+        if (root.exists("split_min_file_time")) {
+            if (!setting_as_double(root["split_min_file_time"], &split_min_file_time)) {
+                cerr << "Configuration error: split_min_file_time must be a number\n";
+                error();
+            }
+        }
+        if (root.exists("split_max_file_time")) {
+            if (!setting_as_double(root["split_max_file_time"], &split_max_file_time)) {
+                cerr << "Configuration error: split_max_file_time must be a number\n";
+                error();
+            }
+        }
+        if (root.exists("split_max_idle_time")) {
+            if (!setting_as_double(root["split_max_idle_time"], &split_max_idle_time)) {
+                cerr << "Configuration error: split_max_idle_time must be a number\n";
+                error();
+            }
+        }
+        if (!valid_split_file_times(split_min_file_time, split_max_file_time, split_max_idle_time)) {
+            cerr << "Configuration error: invalid split file time settings (need split_min_file_time >= 1.0, split_max_file_time > split_min_file_time, split_max_idle_time > 0)\n";
             error();
         }
 #ifdef NFM

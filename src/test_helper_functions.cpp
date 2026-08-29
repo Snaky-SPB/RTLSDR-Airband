@@ -19,6 +19,8 @@
 
 #include "test_base_class.h"
 
+#include <libconfig.h++>
+
 #include "helper_functions.h"
 
 using namespace std;
@@ -166,30 +168,82 @@ TEST_F(HelperFunctionsTest, make_dated_subdirs_some_exist) {
     EXPECT_TRUE(dir_exists(dir_through_month + "08"));
 }
 
-TEST_F(HelperFunctionsTest, should_close_transmission_file_max_duration) {
-    EXPECT_TRUE(should_close_transmission_file(6001.0, 0.0, 1.0, 6000.0, 0.5));
+TEST_F(HelperFunctionsTest, should_close_split_file_max_duration) {
+    EXPECT_TRUE(should_close_split_file(6001.0, 0.0, 1.0, 6000.0, 0.5));
 }
 
-TEST_F(HelperFunctionsTest, should_close_transmission_file_duration_at_max) {
-    EXPECT_FALSE(should_close_transmission_file(6000.0, 0.0, 1.0, 6000.0, 0.5));
+TEST_F(HelperFunctionsTest, should_close_split_file_duration_at_max) {
+    EXPECT_FALSE(should_close_split_file(6000.0, 0.0, 1.0, 6000.0, 0.5));
 }
 
-TEST_F(HelperFunctionsTest, should_close_transmission_file_idle_after_min_duration) {
-    EXPECT_TRUE(should_close_transmission_file(10.0, 0.6, 1.0, 6000.0, 0.5));
+TEST_F(HelperFunctionsTest, should_close_split_file_idle_after_min_duration) {
+    EXPECT_TRUE(should_close_split_file(10.0, 0.6, 1.0, 6000.0, 0.5));
 }
 
-TEST_F(HelperFunctionsTest, should_close_transmission_file_idle_at_max) {
-    EXPECT_FALSE(should_close_transmission_file(10.0, 0.5, 1.0, 6000.0, 0.5));
+TEST_F(HelperFunctionsTest, should_close_split_file_idle_at_max) {
+    EXPECT_FALSE(should_close_split_file(10.0, 0.5, 1.0, 6000.0, 0.5));
 }
 
-TEST_F(HelperFunctionsTest, should_close_transmission_file_idle_before_min_duration) {
-    EXPECT_FALSE(should_close_transmission_file(0.5, 10.0, 1.0, 6000.0, 0.5));
+TEST_F(HelperFunctionsTest, should_close_split_file_idle_before_min_duration) {
+    EXPECT_FALSE(should_close_split_file(0.5, 10.0, 1.0, 6000.0, 0.5));
 }
 
-TEST_F(HelperFunctionsTest, should_close_transmission_file_duration_at_min) {
-    EXPECT_FALSE(should_close_transmission_file(1.0, 10.0, 1.0, 6000.0, 0.5));
+TEST_F(HelperFunctionsTest, should_close_split_file_duration_at_min) {
+    EXPECT_FALSE(should_close_split_file(1.0, 10.0, 1.0, 6000.0, 0.5));
 }
 
-TEST_F(HelperFunctionsTest, should_close_transmission_file_no_idle) {
-    EXPECT_FALSE(should_close_transmission_file(10.0, 0.1, 1.0, 6000.0, 0.5));
+TEST_F(HelperFunctionsTest, should_close_split_file_no_idle) {
+    EXPECT_FALSE(should_close_split_file(10.0, 0.1, 1.0, 6000.0, 0.5));
+}
+
+TEST_F(HelperFunctionsTest, valid_split_file_times_ok) {
+    EXPECT_TRUE(valid_split_file_times(1.0, 60.0, 0.5));
+}
+
+TEST_F(HelperFunctionsTest, valid_split_file_times_min_too_small) {
+    EXPECT_FALSE(valid_split_file_times(0.5, 60.0, 0.5));
+}
+
+TEST_F(HelperFunctionsTest, valid_split_file_times_max_not_greater) {
+    EXPECT_FALSE(valid_split_file_times(60.0, 60.0, 0.5));
+    EXPECT_FALSE(valid_split_file_times(60.0, 30.0, 0.5));
+}
+
+TEST_F(HelperFunctionsTest, valid_split_file_times_idle_not_positive) {
+    EXPECT_FALSE(valid_split_file_times(1.0, 60.0, 0.0));
+    EXPECT_FALSE(valid_split_file_times(1.0, 60.0, -1.0));
+}
+
+TEST_F(HelperFunctionsTest, setting_as_double_int) {
+    libconfig::Config config;
+    libconfig::Setting& s = config.getRoot().add("value", libconfig::Setting::TypeInt);
+    s = 5;
+    double value = 0.0;
+    EXPECT_TRUE(setting_as_double(s, &value));
+    EXPECT_DOUBLE_EQ(value, 5.0);
+}
+
+TEST_F(HelperFunctionsTest, setting_as_double_float) {
+    libconfig::Config config;
+    libconfig::Setting& s = config.getRoot().add("value", libconfig::Setting::TypeFloat);
+    s = 0.5f;
+    double value = 0.0;
+    EXPECT_TRUE(setting_as_double(s, &value));
+    EXPECT_DOUBLE_EQ(value, 0.5);
+}
+
+TEST_F(HelperFunctionsTest, setting_as_double_bool_rejected) {
+    libconfig::Config config;
+    libconfig::Setting& s = config.getRoot().add("value", libconfig::Setting::TypeBoolean);
+    s = true;
+    double value = 0.0;
+    EXPECT_FALSE(setting_as_double(s, &value));
+}
+
+TEST_F(HelperFunctionsTest, setting_as_double_string_rejected) {
+    libconfig::Config config;
+    libconfig::Setting& s = config.getRoot().add("value", libconfig::Setting::TypeString);
+    s = "5.0";
+    double value = 0.0;
+    EXPECT_FALSE(setting_as_double(s, &value));
 }

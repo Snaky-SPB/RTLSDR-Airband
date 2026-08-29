@@ -26,11 +26,36 @@
 #include <cstring>
 #include <iostream>
 #include <libconfig.h++>
+#include "helper_functions.h"
 #include "input-common.h"  // input_t
 #include "rtl_airband.h"
 #include "wideband_scan.h"
 
 using namespace std;
+
+// resolve per-output split file time settings, falling back to the global values
+static void parse_split_file_times(libconfig::Setting& out, file_data* fdata) {
+    fdata->split_min_file_time = split_min_file_time;
+    fdata->split_max_file_time = split_max_file_time;
+    fdata->split_max_idle_time = split_max_idle_time;
+
+    if (out.exists("split_min_file_time") && !setting_as_double(out["split_min_file_time"], &fdata->split_min_file_time)) {
+        cerr << "Configuration error: split_min_file_time must be a number\n";
+        error();
+    }
+    if (out.exists("split_max_file_time") && !setting_as_double(out["split_max_file_time"], &fdata->split_max_file_time)) {
+        cerr << "Configuration error: split_max_file_time must be a number\n";
+        error();
+    }
+    if (out.exists("split_max_idle_time") && !setting_as_double(out["split_max_idle_time"], &fdata->split_max_idle_time)) {
+        cerr << "Configuration error: split_max_idle_time must be a number\n";
+        error();
+    }
+    if (!valid_split_file_times(fdata->split_min_file_time, fdata->split_max_file_time, fdata->split_max_idle_time)) {
+        cerr << "Configuration error: invalid split file time settings (need split_min_file_time >= 1.0, split_max_file_time > split_min_file_time, split_max_idle_time > 0)\n";
+        error();
+    }
+}
 
 static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, int j, bool parsing_mixers) {
     int oo = 0;
@@ -123,6 +148,7 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
             fdata->split_on_transmission = outs[o].exists("split_on_transmission") ? (bool)(outs[o]["split_on_transmission"]) : false;
             fdata->include_freq = outs[o].exists("include_freq") ? (bool)(outs[o]["include_freq"]) : false;
             fdata->discontinuity_tone = outs[o].exists("discontinuity_tone") ? (bool)(outs[o]["discontinuity_tone"]) : true;
+            parse_split_file_times(outs[o], fdata);
 
             channel->outputs[oo].has_mp3_output = true;
 
@@ -162,6 +188,7 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
             fdata->split_on_transmission = outs[o].exists("split_on_transmission") ? (bool)(outs[o]["split_on_transmission"]) : false;
             fdata->include_freq = outs[o].exists("include_freq") ? (bool)(outs[o]["include_freq"]) : false;
             fdata->discontinuity_tone = outs[o].exists("discontinuity_tone") ? (bool)(outs[o]["discontinuity_tone"]) : true;
+            parse_split_file_times(outs[o], fdata);
             channel->needs_raw_iq = channel->has_iq_outputs = 1;
 
             if (fdata->continuous && fdata->split_on_transmission) {
