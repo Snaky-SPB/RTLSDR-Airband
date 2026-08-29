@@ -1,6 +1,6 @@
 /*
- * file_output.h
- * File output (mp3/raw) lifecycle: filename, open/append, write, close
+ * output-common.h
+ * Common output routines: per-type dispatch, output threads
  *
  * Copyright (C) 2026 rtl-airband contributors
  *
@@ -18,23 +18,16 @@
  * along with this program; if not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef _FILE_OUTPUT_H
-#define _FILE_OUTPUT_H
-
-#include <stdio.h>
+#ifndef _OUTPUT_COMMON_H
+#define _OUTPUT_COMMON_H 1
 
 #include "rtl_airband.h"
 
-// low-level helpers
-int open_file(file_data* fdata, mix_modes mixmode, int is_audio);
-int rename_if_exists(char const* oldpath, char const* newpath);
+// Create all the output for a particular channel.
+void process_outputs(channel_t* channel, int cur_scan_freq);
+void disable_channel_outputs(channel_t* channel);
+void disable_device_outputs(device_t* dev);
+void* output_check_thread(void* params);
+void* output_thread(void* params);
 
-// file output lifecycle
-lame_t airlame_init(mix_modes mixmode, int highpass, int lowpass);
-bool output_file_ready(channel_t* channel, output_t* output);
-int file_write(channel_t* channel, output_t* output);
-void close_file(output_t* output);
-void close_if_necessary(output_t* output);
-void close_channel_file_outputs(channel_t* channel);
-
-#endif /* _FILE_OUTPUT_H */
+#endif /* _OUTPUT_COMMON_H */

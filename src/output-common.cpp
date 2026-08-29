@@ -1,6 +1,6 @@
 /*
- * output.cpp
- * Output related routines
+ * output-common.cpp
+ * Common output routines: per-type dispatch, output threads, stats file
  *
  * Copyright (c) 2015-2021 Tomasz Lemiech <szpajder@gmail.com>
  *
@@ -17,133 +17,21 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, see <https://www.gnu.org/licenses/>.
  */
-#include <math.h>
-#include <ogg/ogg.h>
-#include <shout/shout.h>
 #include <stdio.h>
-#include <sys/stat.h>
 #include <sys/time.h>
-#include <sys/types.h>
 #include <unistd.h>
-#include <vorbis/vorbisenc.h>
-
-// SHOUTERR_RETRY is available since libshout 2.4.0.
-// Set it to an impossible value if it's not there.
-#ifndef SHOUTERR_RETRY
-#define SHOUTERR_RETRY (-255)
-#endif /* SHOUTERR_RETRY */
-
-#include <lame/lame.h>
-
-#ifdef WITH_PULSEAUDIO
-#include <pulse/pulseaudio.h>
-#endif /* WITH_PULSEAUDIO */
-
 #include <syslog.h>
 #include <cassert>
 #include <cerrno>
-#include <cstdlib>
 #include <cstring>
-#include <ctime>
-#include <sstream>
-#include <string>
 #include "config.h"
-#include "file_output.h"
-#include "helper_functions.h"
 #include "input-common.h"
+#include "output-common.h"
+#include "output-file.h"
+#include "output-icecast.h"
+#include "output-pulse.h"
+#include "output-udp.h"
 #include "rtl_airband.h"
-
-void shout_setup(icecast_data* icecast, mix_modes mixmode) {
-    int ret;
-    shout_t* shouttemp = shout_new();
-    if (shouttemp == NULL) {
-        printf("cannot allocate\n");
-    }
-    if (shout_set_host(shouttemp, icecast->hostname) != SHOUTERR_SUCCESS) {
-        shout_free(shouttemp);
-        return;
-    }
-    if (shout_set_protocol(shouttemp, SHOUT_PROTOCOL_HTTP) != SHOUTERR_SUCCESS) {
-        shout_free(shouttemp);
-        return;
-    }
-    if (shout_set_port(shouttemp, icecast->port) != SHOUTERR_SUCCESS) {
-        shout_free(shouttemp);
-        return;
-    }
-#ifdef LIBSHOUT_HAS_TLS
-    if (shout_set_tls(shouttemp, icecast->tls_mode) != SHOUTERR_SUCCESS) {
-        shout_free(shouttemp);
-        return;
-    }
-#endif /* LIBSHOUT_HAS_TLS */
-    char mp[100];
-    sprintf(mp, "/%s", icecast->mountpoint);
-    if (shout_set_mount(shouttemp, mp) != SHOUTERR_SUCCESS) {
-        shout_free(shouttemp);
-        return;
-    }
-    if (shout_set_user(shouttemp, icecast->username) != SHOUTERR_SUCCESS) {
-        shout_free(shouttemp);
-        return;
-    }
-    if (shout_set_password(shouttemp, icecast->password) != SHOUTERR_SUCCESS) {
-        shout_free(shouttemp);
-        return;
-    }
-#ifdef LIBSHOUT_HAS_CONTENT_FORMAT
-    if (shout_set_content_format(shouttemp, SHOUT_FORMAT_MP3, SHOUT_USAGE_AUDIO, NULL) != SHOUTERR_SUCCESS) {
-#else
-    if (shout_set_format(shouttemp, SHOUT_FORMAT_MP3) != SHOUTERR_SUCCESS) {
-#endif /* LIBSHOUT_HAS_CONTENT_FORMAT */
-        shout_free(shouttemp);
-        return;
-    }
-    if (icecast->name && shout_set_meta(shouttemp, SHOUT_META_NAME, icecast->name) != SHOUTERR_SUCCESS) {
-        shout_free(shouttemp);
-        return;
-    }
-    if (icecast->genre && shout_set_meta(shouttemp, SHOUT_META_GENRE, icecast->genre) != SHOUTERR_SUCCESS) {
-        shout_free(shouttemp);
-        return;
-    }
-    if (icecast->description && shout_set_meta(shouttemp, SHOUT_META_DESCRIPTION, icecast->description) != SHOUTERR_SUCCESS) {
-        shout_free(shouttemp);
-        return;
-    }
-    char samplerates[20];
-    sprintf(samplerates, "%d", MP3_RATE);
-    shout_set_audio_info(shouttemp, SHOUT_AI_SAMPLERATE, samplerates);
-    shout_set_audio_info(shouttemp, SHOUT_AI_CHANNELS, (mixmode == MM_STEREO ? "2" : "1"));
-
-    if (shout_set_nonblocking(shouttemp, 1) != SHOUTERR_SUCCESS) {
-        log(LOG_ERR, "Error setting non-blocking mode: %s\n", shout_get_error(shouttemp));
-        return;
-    }
-    ret = shout_open(shouttemp);
-    if (ret == SHOUTERR_SUCCESS)
-        ret = SHOUTERR_CONNECTED;
-
-    if (ret == SHOUTERR_BUSY || ret == SHOUTERR_RETRY)
-        log(LOG_NOTICE, "Connecting to %s:%d/%s...\n", icecast->hostname, icecast->port, icecast->mountpoint);
-
-    int shout_timeout = 30 * 5;  // 30 * 5 * 200ms = 30s
-    while ((ret == SHOUTERR_BUSY || ret == SHOUTERR_RETRY) && shout_timeout-- > 0) {
-        SLEEP(200);
-        ret = shout_get_connected(shouttemp);
-    }
-
-    if (ret == SHOUTERR_CONNECTED) {
-        log(LOG_NOTICE, "Connected to %s:%d/%s\n", icecast->hostname, icecast->port, icecast->mountpoint);
-        SLEEP(100);
-        icecast->shout = shouttemp;
-    } else {
-        log(LOG_WARNING, "Could not connect to %s:%d/%s: %s\n", icecast->hostname, icecast->port, icecast->mountpoint, shout_get_error(shouttemp));
-        shout_close(shouttemp);
-        shout_free(shouttemp);
-        return;
-    }
-}
 
 // Create all the output for a particular channel.
 void process_outputs(channel_t* channel, int cur_scan_freq) {
@@ -151,50 +39,7 @@ void process_outputs(channel_t* channel, int cur_scan_freq) {
         if (channel->outputs[k].enabled == false)
             continue;
         if (channel->outputs[k].type == O_ICECAST) {
-            icecast_data* icecast = (icecast_data*)(channel->outputs[k].data);
-            if (icecast->shout == NULL)
-                continue;
-
-            // encode and send mp3 to shoutcast output
-            const auto& lame = channel->outputs[k].lame;
-            const auto& lamebuf = channel->outputs[k].lamebuf;
-            int mp3_bytes = lame_encode_buffer_ieee_float(lame, channel->waveout, (channel->mode == MM_STEREO ? channel->waveout_r : NULL), WAVE_BATCH, lamebuf, LAMEBUF_SIZE);
-            if (mp3_bytes < 0) {
-                log(LOG_WARNING, "lame_encode_buffer_ieee_float: %d\n", mp3_bytes);
-            }
-
-            if (mp3_bytes == 0) {
-                continue;
-            }
-
-            int ret = shout_send(icecast->shout, channel->outputs[k].lamebuf, mp3_bytes);
-
-            if (ret != SHOUTERR_SUCCESS || shout_queuelen(icecast->shout) > MAX_SHOUT_QUEUELEN) {
-                if (shout_queuelen(icecast->shout) > MAX_SHOUT_QUEUELEN)
-                    log(LOG_WARNING, "Exceeded max backlog for %s:%d/%s, disconnecting\n", icecast->hostname, icecast->port, icecast->mountpoint);
-                // reset connection
-                log(LOG_WARNING, "Lost connection to %s:%d/%s\n", icecast->hostname, icecast->port, icecast->mountpoint);
-                shout_close(icecast->shout);
-                shout_free(icecast->shout);
-                icecast->shout = NULL;
-            } else if (icecast->send_scan_freq_tags && cur_scan_freq >= 0) {
-                shout_metadata_t* meta = shout_metadata_new();
-                char description[32];
-                if (channel->freqlist[channel->freq_idx].label != NULL) {
-                    if (shout_metadata_add(meta, "song", channel->freqlist[channel->freq_idx].label) != SHOUTERR_SUCCESS) {
-                        log(LOG_WARNING, "Failed to add shout metadata\n");
-                    }
-                } else {
-                    snprintf(description, sizeof(description), "%.3f MHz", channel->freqlist[channel->freq_idx].frequency / 1000000.0);
-                    if (shout_metadata_add(meta, "song", description) != SHOUTERR_SUCCESS) {
-                        log(LOG_WARNING, "Failed to add shout metadata\n");
-                    }
-                }
-                if (SHOUT_SET_METADATA(icecast->shout, meta) != SHOUTERR_SUCCESS) {
-                    log(LOG_WARNING, "Failed to add shout metadata\n");
-                }
-                shout_metadata_free(meta);
-            }
+            icecast_write(channel, &channel->outputs[k], cur_scan_freq);
         } else if (channel->outputs[k].type == O_FILE || channel->outputs[k].type == O_RAWFILE) {
             file_write(channel, &channel->outputs[k]);
         } else if (channel->outputs[k].type == O_MIXER) {
@@ -212,7 +57,6 @@ void process_outputs(channel_t* channel, int cur_scan_freq) {
             } else {
                 udp_stream_write(sdata, channel->waveout, channel->waveout_r, (size_t)WAVE_BATCH * sizeof(float));
             }
-
 #ifdef WITH_PULSEAUDIO
         } else if (channel->outputs[k].type == O_PULSE) {
             pulse_data* pdata = (pulse_data*)(channel->outputs[k].data);
@@ -230,25 +74,17 @@ void disable_channel_outputs(channel_t* channel) {
         output_t* output = channel->outputs + k;
         output->enabled = false;
         if (output->type == O_ICECAST) {
-            icecast_data* icecast = (icecast_data*)(channel->outputs[k].data);
-            if (icecast->shout == NULL)
-                continue;
-            log(LOG_WARNING, "Closing connection to %s:%d/%s\n", icecast->hostname, icecast->port, icecast->mountpoint);
-            shout_close(icecast->shout);
-            shout_free(icecast->shout);
-            icecast->shout = NULL;
+            icecast_close((icecast_data*)output->data);
         } else if (output->type == O_FILE || output->type == O_RAWFILE) {
-            close_file(&channel->outputs[k]);
+            close_file(output);
         } else if (output->type == O_MIXER) {
             mixer_data* mdata = (mixer_data*)(output->data);
             mixer_disable_input(mdata->mixer, mdata->input);
         } else if (output->type == O_UDP_STREAM) {
-            udp_stream_data* sdata = (udp_stream_data*)output->data;
-            udp_stream_shutdown(sdata);
+            udp_stream_shutdown((udp_stream_data*)output->data);
 #ifdef WITH_PULSEAUDIO
         } else if (output->type == O_PULSE) {
-            pulse_data* pdata = (pulse_data*)(output->data);
-            pulse_shutdown(pdata);
+            pulse_shutdown((pulse_data*)output->data);
 #endif /* WITH_PULSEAUDIO */
         }
     }
@@ -628,40 +464,16 @@ void* output_check_thread(void*) {
         for (int i = 0; i < device_count; i++) {
             device_t* dev = devices + i;
             for (int j = 0; j < dev->channel_count; j++) {
-                for (int k = 0; k < dev->channels[j].output_count; k++) {
-                    if (dev->channels[j].outputs[k].type == O_ICECAST) {
-                        icecast_data* icecast = (icecast_data*)(dev->channels[j].outputs[k].data);
-                        if (dev->input->state == INPUT_FAILED) {
-                            if (icecast->shout) {
-                                log(LOG_WARNING, "Device #%d failed, disconnecting stream %s:%d/%s\n", i, icecast->hostname, icecast->port, icecast->mountpoint);
-                                shout_close(icecast->shout);
-                                shout_free(icecast->shout);
-                                icecast->shout = NULL;
-                            }
-                        } else if (dev->input->state == INPUT_RUNNING) {
-                            if (icecast->shout == NULL) {
-                                log(LOG_NOTICE, "Trying to reconnect to %s:%d/%s...\n", icecast->hostname, icecast->port, icecast->mountpoint);
-                                shout_setup(icecast, dev->channels[j].mode);
-                            }
-                        }
-                    } else if (dev->channels[j].outputs[k].type == O_UDP_STREAM) {
-                        udp_stream_data* sdata = (udp_stream_data*)dev->channels[j].outputs[k].data;
-
-                        if (dev->input->state == INPUT_FAILED) {
-                            udp_stream_shutdown(sdata);
-                        }
+                channel_t* channel = dev->channels + j;
+                for (int k = 0; k < channel->output_count; k++) {
+                    output_t* output = channel->outputs + k;
+                    if (output->type == O_ICECAST) {
+                        icecast_check((icecast_data*)output->data, dev->input->state, channel->mode, i);
+                    } else if (output->type == O_UDP_STREAM) {
+                        udp_stream_check((udp_stream_data*)output->data, dev->input->state);
 #ifdef WITH_PULSEAUDIO
-                    } else if (dev->channels[j].outputs[k].type == O_PULSE) {
-                        pulse_data* pdata = (pulse_data*)(dev->channels[j].outputs[k].data);
-                        if (dev->input->state == INPUT_FAILED) {
-                            if (pdata->context) {
-                                pulse_shutdown(pdata);
-                            }
-                        } else if (dev->input->state == INPUT_RUNNING) {
-                            if (pdata->context == NULL) {
-                                pulse_setup(pdata, dev->channels[j].mode);
-                            }
-                        }
+                    } else if (output->type == O_PULSE) {
+                        pulse_check((pulse_data*)output->data, dev->input->state, channel->mode);
 #endif /* WITH_PULSEAUDIO */
                     }
                 }
@@ -670,21 +482,16 @@ void* output_check_thread(void*) {
         for (int i = 0; i < mixer_count; i++) {
             if (mixers[i].enabled == false)
                 continue;
-            for (int k = 0; k < mixers[i].channel.output_count; k++) {
-                if (mixers[i].channel.outputs[k].enabled == false)
+            channel_t* channel = &mixers[i].channel;
+            for (int k = 0; k < channel->output_count; k++) {
+                output_t* output = channel->outputs + k;
+                if (output->enabled == false)
                     continue;
-                if (mixers[i].channel.outputs[k].type == O_ICECAST) {
-                    icecast_data* icecast = (icecast_data*)(mixers[i].channel.outputs[k].data);
-                    if (icecast->shout == NULL) {
-                        log(LOG_NOTICE, "Trying to reconnect to %s:%d/%s...\n", icecast->hostname, icecast->port, icecast->mountpoint);
-                        shout_setup(icecast, mixers[i].channel.mode);
-                    }
+                if (output->type == O_ICECAST) {
+                    icecast_check((icecast_data*)output->data, INPUT_RUNNING, channel->mode, -1);
 #ifdef WITH_PULSEAUDIO
-                } else if (mixers[i].channel.outputs[k].type == O_PULSE) {
-                    pulse_data* pdata = (pulse_data*)(mixers[i].channel.outputs[k].data);
-                    if (pdata->context == NULL) {
-                        pulse_setup(pdata, mixers[i].channel.mode);
-                    }
+                } else if (output->type == O_PULSE) {
+                    pulse_check((pulse_data*)output->data, INPUT_RUNNING, channel->mode);
 #endif /* WITH_PULSEAUDIO */
                 }
             }

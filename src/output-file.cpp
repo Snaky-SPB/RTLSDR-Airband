@@ -1,5 +1,5 @@
 /*
- * file_output.cpp
+ * output-file.cpp
  * File output (mp3/raw) open/append support
  *
  * Copyright (c) 2015-2021 Tomasz Lemiech <szpajder@gmail.com>
@@ -32,7 +32,7 @@
 #include <lame/lame.h>
 
 #include "config.h"
-#include "file_output.h"
+#include "output-file.h"
 #include "helper_functions.h"
 
 lame_t airlame_init(mix_modes mixmode, int highpass, int lowpass) {

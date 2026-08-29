@@ -1,5 +1,5 @@
 /*
- * udp_stream.cpp
+ * output-udp.cpp
  *
  * Copyright (C) 2024 charlie-foxtrot
  *
@@ -24,6 +24,7 @@
 #include <arpa/inet.h>  // inet_aton()
 #include <netdb.h>      // getaddrinfo()
 
+#include "output-udp.h"
 #include "rtl_airband.h"
 
 bool udp_stream_init(udp_stream_data* sdata, mix_modes mode, size_t len) {
@@ -104,5 +105,11 @@ void udp_stream_write(udp_stream_data* sdata, const float* data_left, const floa
 void udp_stream_shutdown(udp_stream_data* sdata) {
     if (sdata->send_socket != -1) {
         close(sdata->send_socket);
+    }
+}
+
+void udp_stream_check(udp_stream_data* sdata, input_state_t state) {
+    if (state == INPUT_FAILED) {
+        udp_stream_shutdown(sdata);
     }
 }

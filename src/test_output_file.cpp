@@ -1,5 +1,5 @@
 /*
- * test_file_output.cpp
+ * test_output_file.cpp
  *
  * Copyright (C) 2026 rtl-airband contributors
  *
@@ -29,7 +29,7 @@
 #include <ctime>
 #include <string>
 
-#include "file_output.h"
+#include "output-file.h"
 #include "test_base_class.h"
 
 class FileOutputTest : public TestBaseClass {

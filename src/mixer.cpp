@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "config.h"
+#include "output-common.h"
 #include "rtl_airband.h"
 
 static char* err;

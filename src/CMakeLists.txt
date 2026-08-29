@@ -166,7 +166,7 @@ endif()
 if(PULSEAUDIO)
 	pkg_check_modules(PULSEAUDIO libpulse)
 	if(PULSEAUDIO_FOUND)
-		list(APPEND rtl_airband_extra_sources pulse.cpp)
+		list(APPEND rtl_airband_extra_sources output-pulse.cpp)
 		list(APPEND rtl_airband_extra_libs ${PULSEAUDIO_LIBRARIES})
 		list(APPEND rtl_airband_include_dirs ${PULSEAUDIO_INCLUDE_DIRS})
 		list(APPEND link_dirs ${PULSEAUDIO_LIBRARY_DIRS})
@@ -280,13 +280,14 @@ add_library (rtl_airband_base OBJECT
 	input-file.cpp
 	input-helpers.cpp
 	mixer.cpp
-	output.cpp
-	file_output.cpp
+	output-common.cpp
+	output-file.cpp
+	output-icecast.cpp
+	output-udp.cpp
 	rtl_airband.cpp
 	squelch.cpp
 	ctcss.cpp
 	util.cpp
-	udp_stream.cpp
 	logging.cpp
 	filters.cpp
 	helper_functions.cpp
@@ -361,7 +362,7 @@ if(BUILD_UNITTESTS)
 		generate_signal.cpp
 		helper_functions.cpp
 		wideband_scan.cpp
-		file_output.cpp
+		output-file.cpp
 		util.cpp
 	)
 

@@ -74,7 +74,6 @@
 #define AGC_EXTRA 100
 #define WAVE_LEN 2 * WAVE_BATCH + AGC_EXTRA
 #define MP3_RATE 8000
-#define MAX_SHOUT_QUEUELEN 32768
 #define TAG_QUEUE_LEN 16
 
 #define MIN_FFT_SIZE_LOG 8
@@ -350,13 +349,6 @@ struct output_params_t {
 // version.cpp
 extern char const* RTL_AIRBAND_VERSION;
 
-// output.cpp
-void shout_setup(icecast_data* icecast, mix_modes mixmode);
-void disable_device_outputs(device_t* dev);
-void disable_channel_outputs(channel_t* channel);
-void* output_check_thread(void* params);
-void* output_thread(void* params);
-
 // rtl_airband.cpp
 extern bool use_localtime;
 extern bool multiple_demod_threads;
@@ -403,21 +395,5 @@ const char* mixer_get_error();
 // config.cpp
 int parse_devices(libconfig::Setting& devs);
 int parse_mixers(libconfig::Setting& mx);
-
-// udp_stream.cpp
-bool udp_stream_init(udp_stream_data* sdata, mix_modes mode, size_t len);
-void udp_stream_write(udp_stream_data* sdata, const float* data, size_t len);
-void udp_stream_write(udp_stream_data* sdata, const float* data_left, const float* data_right, size_t len);
-void udp_stream_shutdown(udp_stream_data* sdata);
-
-#ifdef WITH_PULSEAUDIO
-#define PULSE_STREAM_LATENCY_LIMIT 10000000UL
-// pulse.cpp
-void pulse_init();
-int pulse_setup(pulse_data* pdata, mix_modes mixmode);
-void pulse_start();
-void pulse_shutdown(pulse_data* pdata);
-void pulse_write_stream(pulse_data* pdata, mix_modes mode, const float* data_left, const float* data_right, size_t len);
-#endif /* WITH_PULSEAUDIO */
 
 #endif /* _RTL_AIRBAND_H */

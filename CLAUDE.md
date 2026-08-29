@@ -175,8 +175,11 @@ SDR device (input-*.cpp)
 | `src/rtl_airband.cpp` | Main entry point, demod loop, thread management |
 | `src/rtl_airband.h` | All major struct/enum definitions (`device_t`, `channel_t`, `mixer_t`, `output_t`) |
 | `src/config.cpp` | libconfig++ parsing for devices, channels, mixers, outputs |
-| `src/output.cpp` | MP3 encoding, Icecast connections, UDP output |
-| `src/file_output.cpp/h` | File output (mp3/raw) lifecycle: filename/timestamp, open/append (discontinuity tones `discontinuity_tone`, default on), per-batch write, close policy (hour/split), lametag flush |
+| `src/output-common.cpp/h` | Common output: per-type dispatch (`process_outputs`/`disable_channel_outputs`), output threads, stats file |
+| `src/output-icecast.cpp/h` | Icecast output: libshout connection, MP3 encode + send, reconnect |
+| `src/output-file.cpp/h` | File output (mp3/raw) lifecycle: filename/timestamp, open/append (discontinuity tones `discontinuity_tone`, default on), per-batch write, close policy (hour/split), lametag flush |
+| `src/output-udp.cpp/h` | UDP stream output (raw 32-bit float audio) |
+| `src/output-pulse.cpp/h` | PulseAudio output (optional, `PULSEAUDIO` CMake flag) |
 | `src/mixer.cpp` | Multi-channel mixer with ampfactor/balance |
 | `src/input-*.cpp` | SDR device drivers (rtlsdr, soapysdr, mirisdr, file) |
 | `src/input-common.cpp/h` | Input device abstraction (`input_t` function-pointer interface) |

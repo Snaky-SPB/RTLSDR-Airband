@@ -59,9 +59,13 @@
 #include <ctime>
 #include <iostream>
 #include <libconfig.h++>
-#include "file_output.h"
 #include "input-common.h"
 #include "logging.h"
+#include "output-common.h"
+#include "output-file.h"
+#include "output-icecast.h"
+#include "output-pulse.h"
+#include "output-udp.h"
 #include "rtl_airband.h"
 #include "squelch.h"
 #include "wideband_scan.h"

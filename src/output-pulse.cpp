@@ -1,5 +1,5 @@
 /*
- * pulse.cpp
+ * output-pulse.cpp
  * PulseAudio output routines
  *
  * Copyright (c) 2015-2021 Tomasz Lemiech <szpajder@gmail.com>
@@ -21,9 +21,11 @@
 #include <pulse/pulseaudio.h>
 #include <syslog.h>
 #include <iostream>
+#include "output-pulse.h"
 #include "rtl_airband.h"
 
 #define SERVER_IFNOTNULL(x) ((x) ? (x) : "<default_server>")
+#define PULSE_STREAM_LATENCY_LIMIT 10000000UL
 #define PA_LOOP_LOCK(x)                       \
     if (!pa_threaded_mainloop_in_thread(x)) { \
         pa_threaded_mainloop_lock(x);         \
@@ -57,6 +59,18 @@ void pulse_shutdown(pulse_data* pdata) {
         pdata->context = NULL;
     }
     PA_LOOP_UNLOCK(mainloop);
+}
+
+void pulse_check(pulse_data* pdata, input_state_t state, mix_modes mode) {
+    if (state == INPUT_FAILED) {
+        if (pdata->context) {
+            pulse_shutdown(pdata);
+        }
+    } else if (state == INPUT_RUNNING) {
+        if (pdata->context == NULL) {
+            pulse_setup(pdata, mode);
+        }
+    }
 }
 
 static void pulse_stream_underflow_cb(pa_stream*, void* userdata) {
