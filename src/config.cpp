@@ -357,6 +357,9 @@ static int parse_channels(libconfig::Setting& chans, device_t* dev, int i) {
         }
         channel->afc = chans[j].exists("afc") ? (unsigned char)(unsigned int)chans[j]["afc"] : 0;
         if (dev->mode == R_MULTICHANNEL) {
+            if (chans[j].exists("freqs")) {
+                cerr << "Warning: devices.[" << i << "] channels.[" << j << "]: freqs is ignored in multichannel mode (use mode = \"scan\" for a frequency list)\n";
+            }
             channel->freqlist = mk_freqlist(1);
             channel->freqlist[0].frequency = parse_anynum2int(chans[j]["freq"]);
             warn_if_freq_not_in_range(i, j, channel->freqlist[0].frequency, dev->input->centerfreq, dev->input->sample_rate);
@@ -365,6 +368,9 @@ static int parse_channels(libconfig::Setting& chans, device_t* dev, int i) {
             }
             channel->freqlist[0].modulation = channel_modulation;
         } else { /* R_SCAN */
+            if (chans[j].exists("freq")) {
+                cerr << "Warning: devices.[" << i << "] channels.[" << j << "]: freq is ignored in scan mode (use freqs for a frequency list)\n";
+            }
             channel->freq_count = chans[j]["freqs"].getLength();
             if (channel->freq_count < 1) {
                 cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "]: freqs should be a list with at least one element\n";

@@ -1015,6 +1015,11 @@ int main(int argc, char* argv[]) {
             error();
         }
         device_count = devs_enabled;
+        for (int i = 0; i < mixer_count; i++) {
+            if (mixers[i].enabled == false) {
+                cerr << "Warning: mixers.[" << i << "] \"" << mixers[i].name << "\": no inputs connected, the mixer will be ignored (connect it from a channel output of type \"mixer\")\n";
+            }
+        }
         debug_print("mixer_count=%d\n", mixer_count);
 #ifdef DEBUG
         for (int z = 0; z < mixer_count; z++) {
