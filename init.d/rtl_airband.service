@@ -3,14 +3,19 @@ Description=SDR AM/NFM demodulator
 Documentation=https://github.com/rtl-airband/RTLSDR-Airband/wiki
 Wants=network.target  # NOTE: `network-online.target` may be better for some use cases
 After=network.target  # NOTE: `network-online.target` may be better for some use cases
+StartLimitIntervalSec=300
+StartLimitBurst=30
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/rtl_airband -Fe
-# The program may exit only due to startup failure (eg. misconfiguration)
-# or due to failure of all SDR devices (eg. disconnection). In either case,
-# there is no point to restart it, because it would fail once again.
-Restart=no
+# The program exits cleanly when all SDR devices fail (eg. USB
+# disconnection), which is often transient: the device reappears after a
+# hub port reset within seconds to minutes. Restart with a delay so the
+# re-enumerated device is found; the start limit above bounds the retry
+# window (~5 min) if the device is really gone.
+Restart=always
+RestartSec=10s
 
 [Install]
 WantedBy=multi-user.target
