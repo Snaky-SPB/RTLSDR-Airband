@@ -32,8 +32,8 @@
 #include <lame/lame.h>
 
 #include "config.h"
-#include "output-file.h"
 #include "helper_functions.h"
+#include "output-file.h"
 
 lame_t airlame_init(mix_modes mixmode, int highpass, int lowpass) {
     lame_t lame = lame_init();
@@ -338,7 +338,7 @@ bool output_file_ready(channel_t* channel, output_t* output) {
     // use a string stream to build the output filepath
     std::stringstream ss;
     ss << output_dir << '/' << fdata->basename << timestamp;
-    if (fdata->include_freq) {
+    if (fdata->include_freq && channel->freqlist) {  // mixer channels have no frequency
         ss << '_' << channel->freqlist[channel->freq_idx].frequency;
     }
     ss << fdata->suffix;
@@ -400,11 +400,11 @@ static int write_batch(output_t* output, const float* samples, const float* righ
 }
 
 /*
- * Create the split output file (named after the activity start) and write the
- * buffered audio into it.
+ * Create the output file and write the buffered audio into it. The file is named
+ * after the activity start in split mode and after the creation hour otherwise.
  * Returns 0 on success, -1 if the output was disabled due to an error.
  */
-static int split_open_and_flush(channel_t* channel, output_t* output) {
+static int open_and_flush_buffer(channel_t* channel, output_t* output) {
     file_data* fdata = (file_data*)(output->data);
 
     if (!output_file_ready(channel, output)) {
@@ -427,14 +427,41 @@ static int split_open_and_flush(channel_t* channel, output_t* output) {
 }
 
 /*
+ * Append one batch to the activity buffer. Once the buffered audio outlives
+ * split_min_file_time, create the file and flush the buffer (including this batch).
+ * Returns 0 on success, -1 if the output was disabled due to an error.
+ */
+static int buffer_batch_and_open(channel_t* channel, output_t* output) {
+    file_data* fdata = (file_data*)(output->data);
+    const float* batch = (output->type == O_FILE) ? channel->waveout : channel->iq_out;
+    const float* right = (output->type == O_FILE && channel->mode == MM_STEREO) ? channel->waveout_r : NULL;
+
+    const size_t left_len = (output->type == O_RAWFILE) ? 2 * WAVE_BATCH : WAVE_BATCH;
+    const size_t per_batch = left_len + (right ? WAVE_BATCH : 0);
+    fdata->audio_buf.insert(fdata->audio_buf.end(), batch, batch + left_len);
+    if (right) {
+        fdata->audio_buf.insert(fdata->audio_buf.end(), right, right + WAVE_BATCH);
+    }
+    double buf_sec = (double)(fdata->audio_buf.size() / per_batch) * WAVE_BATCH / WAVE_RATE;
+    if (buf_sec >= fdata->split_min_file_time) {
+        if (open_and_flush_buffer(channel, output) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/*
  * Write one batch of samples to a file output (mp3 or raw IQ).
  *
- * In split_on_transmission mode the audio of an activity is buffered until it outlives
- * split_min_file_time, so that short bursts (clicks, interference) do not create files:
+ * In both modes (continuous outputs excepted) the audio of an activity is buffered until it
+ * outlives split_min_file_time, so that short bursts (clicks, interference) do not create files:
  *   - audio batch, no file yet: buffer; create the file once the buffer reaches min
- *   - audio batch, file open: write; rotate the file when it outlives max
- *   - silence beyond split_max_idle_time: end of activity - close the file if it was
- *     created, otherwise discard the buffered short activity
+ *   - audio batch, file open: write directly
+ *   - silence: split mode ends the activity after split_max_idle_time (close the file if it
+ *     was created, otherwise discard the buffer); non-split mode keeps the hourly file open
+ *     (closed at the hour boundary) and writes one trailing batch after the activity ends
+ *   - split mode only: rotate the file when it outlives split_max_file_time
  * Returns 0 on success, -1 if the output was disabled due to an error.
  */
 int file_write(channel_t* channel, output_t* output) {
@@ -442,8 +469,9 @@ int file_write(channel_t* channel, output_t* output) {
     timeval now;
     gettimeofday(&now, NULL);
 
-    if (channel->freqlist[channel->freq_idx].frequency == 0) {
+    if (channel->freqlist && channel->freqlist[channel->freq_idx].frequency == 0) {
         // no carrier on this (wideband) slot: nothing to record, drop the activity state
+        // (mixer channels have no freqlist at all and never take this branch)
         if (fdata->f) {
             close_file(output);
         }
@@ -454,8 +482,42 @@ int file_write(channel_t* channel, output_t* output) {
     }
 
     if (!fdata->split_on_transmission) {
-        if (fdata->continuous == false && channel->axcindicate == NO_SIGNAL && output->active == false) {
-            close_if_necessary(output);
+        if (fdata->continuous == false && channel->axcindicate == NO_SIGNAL) {
+            if (output->active == false) {
+                // activity already settled: drop any leftover buffered audio
+                fdata->audio_buf.clear();
+                close_if_necessary(output);
+                return 0;
+            }
+            // tail of an activity that just ended: write it if the file exists,
+            // otherwise the activity did not outlive split_min_file_time - drop the buffer
+            if (fdata->f) {
+                if (!output_file_ready(channel, output)) {
+                    log(LOG_WARNING, "Output disabled\n");
+                    output->enabled = false;
+                    return -1;
+                }
+                const float* batch = (output->type == O_FILE) ? channel->waveout : channel->iq_out;
+                const float* right = (output->type == O_FILE && channel->mode == MM_STEREO) ? channel->waveout_r : NULL;
+                if (write_batch(output, batch, right) < 0) {
+                    return -1;
+                }
+                fdata->last_write_time = now;
+            } else {
+                fdata->audio_buf.clear();
+            }
+            output->active = false;
+            return 0;
+        }
+
+        if (fdata->continuous == false && !fdata->f) {
+            // no file yet: buffer the batch until the activity outlives split_min_file_time,
+            // then create the hourly file and flush the buffer (which includes this batch)
+            if (buffer_batch_and_open(channel, output) < 0) {
+                return -1;
+            }
+            output->active = true;
+            fdata->last_write_time = now;
             return 0;
         }
 
@@ -489,17 +551,8 @@ int file_write(channel_t* channel, output_t* output) {
         if (!fdata->f) {
             // no file yet: buffer the batch until the activity outlives split_min_file_time,
             // then create the file and flush the buffer (which includes this batch)
-            const size_t left_len = (output->type == O_RAWFILE) ? 2 * WAVE_BATCH : WAVE_BATCH;
-            const size_t per_batch = left_len + (right ? WAVE_BATCH : 0);
-            fdata->audio_buf.insert(fdata->audio_buf.end(), batch, batch + left_len);
-            if (right) {
-                fdata->audio_buf.insert(fdata->audio_buf.end(), right, right + WAVE_BATCH);
-            }
-            double buf_sec = (double)(fdata->audio_buf.size() / per_batch) * WAVE_BATCH / WAVE_RATE;
-            if (buf_sec >= fdata->split_min_file_time) {
-                if (split_open_and_flush(channel, output) < 0) {
-                    return -1;
-                }
+            if (buffer_batch_and_open(channel, output) < 0) {
+                return -1;
             }
             return 0;
         }

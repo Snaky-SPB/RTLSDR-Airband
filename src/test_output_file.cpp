@@ -53,9 +53,7 @@ class FileOutputTest : public TestBaseClass {
         return fdata;
     }
 
-    void rewind_timeval(timeval* tv, double seconds) {
-        tv->tv_sec -= (long)seconds;
-    }
+    void rewind_timeval(timeval* tv, double seconds) { tv->tv_sec -= (long)seconds; }
 
     void feed_raw_batch(channel_t* channel, int batch_no) {
         for (int i = 0; i < 2 * WAVE_BATCH; i++)
@@ -507,4 +505,200 @@ TEST_F(FileOutputTest, split_slot_release_resets_buffer) {
     EXPECT_FALSE(fdata.activity_active);
     EXPECT_TRUE(fdata.audio_buf.empty());
     EXPECT_EQ(fdata.f, (FILE*)NULL);
+}
+
+TEST_F(FileOutputTest, non_split_short_activity_does_not_create_file) {
+    channel_t channel = make_channel(172800000);
+    file_data fdata = make_fdata("scan");
+    fdata.suffix = ".cf32";
+    fdata.type = O_RAWFILE;
+    output_t output = make_output(&fdata, O_RAWFILE);
+
+    // 4 batches = 0.5s < split_min_file_time (1.0s): buffered only, no file yet
+    for (int b = 0; b < 4; b++) {
+        feed_raw_batch(&channel, b);
+        ASSERT_EQ(file_write(&channel, &output), 0);
+    }
+    ASSERT_FALSE(fdata.audio_buf.empty());
+    ASSERT_EQ(fdata.f, (FILE*)NULL);
+
+    // silence ends the activity: buffer discarded, no file created
+    channel.axcindicate = NO_SIGNAL;
+    ASSERT_EQ(file_write(&channel, &output), 0);
+
+    EXPECT_TRUE(fdata.audio_buf.empty());
+    EXPECT_EQ(fdata.f, (FILE*)NULL);
+    EXPECT_FALSE(output.active);
+
+    time_t now = time(NULL);
+    char ts[32];
+    ASSERT_GT(strftime(ts, sizeof(ts), "_%Y%m%d_%H", gmtime(&now)), 0);
+    EXPECT_EQ(file_size(temp_dir + "/scan" + ts + ".cf32"), -1);
+}
+
+TEST_F(FileOutputTest, non_split_long_activity_creates_hourly_file) {
+    channel_t channel = make_channel(172800000);
+    file_data fdata = make_fdata("scan");
+    fdata.suffix = ".cf32";
+    fdata.type = O_RAWFILE;
+    output_t output = make_output(&fdata, O_RAWFILE);
+
+    const int batches = 20;  // 2.5s > split_min_file_time (1.0s)
+    for (int b = 0; b < batches; b++) {
+        feed_raw_batch(&channel, b);
+        ASSERT_EQ(file_write(&channel, &output), 0);
+    }
+    ASSERT_NE(fdata.f, (FILE*)NULL);
+
+    // hourly file name, based on the file creation time
+    time_t now = time(NULL);
+    char ts[32];
+    ASSERT_GT(strftime(ts, sizeof(ts), "_%Y%m%d_%H", gmtime(&now)), 0);
+    EXPECT_EQ(fdata.file_path, temp_dir + "/scan" + ts + ".cf32");
+    std::string final_path = fdata.file_path;
+
+    // silence ends the activity but the hourly file stays open (no idle close)
+    channel.axcindicate = NO_SIGNAL;
+    ASSERT_EQ(file_write(&channel, &output), 0);
+    ASSERT_NE(fdata.f, (FILE*)NULL);
+    EXPECT_FALSE(output.active);
+
+    close_file(&output);
+
+    // file contains all batches from the first one (buffered prefix included)
+    // plus the trailing silence batch (which repeats the last fed samples)
+    const size_t total = (size_t)batches + 1;
+    const size_t expected_samples = 2 * (size_t)WAVE_BATCH * total;
+    FILE* rf = fopen(final_path.c_str(), "rb");
+    ASSERT_NE(rf, (FILE*)NULL);
+    std::vector<float> content(expected_samples);
+    ASSERT_EQ(fread(content.data(), sizeof(float), expected_samples, rf), expected_samples);
+    fclose(rf);
+    for (size_t b = 0; b < total; b++) {
+        const int src = (b < (size_t)batches) ? (int)b : batches - 1;
+        for (int i = 0; i < 2 * WAVE_BATCH; i++) {
+            EXPECT_FLOAT_EQ(content[b * 2 * WAVE_BATCH + i], (float)(src * 100000 + i));
+        }
+    }
+}
+
+TEST_F(FileOutputTest, non_split_file_stays_open_across_silence) {
+    channel_t channel = make_channel(172800000);
+    file_data fdata = make_fdata("scan");
+    fdata.suffix = ".cf32";
+    fdata.type = O_RAWFILE;
+    output_t output = make_output(&fdata, O_RAWFILE);
+
+    for (int b = 0; b < 10; b++) {
+        feed_raw_batch(&channel, b);
+        ASSERT_EQ(file_write(&channel, &output), 0);
+    }
+    ASSERT_NE(fdata.f, (FILE*)NULL);
+
+    // hourly interval: silence never closes the file, only the hour boundary does
+    channel.axcindicate = NO_SIGNAL;
+    ASSERT_EQ(file_write(&channel, &output), 0);
+    ASSERT_EQ(file_write(&channel, &output), 0);
+    ASSERT_NE(fdata.f, (FILE*)NULL);
+    EXPECT_TRUE(fdata.audio_buf.empty());
+
+    close_file(&output);
+}
+
+TEST_F(FileOutputTest, non_split_second_activity_writes_to_open_file) {
+    channel_t channel = make_channel(172800000);
+    file_data fdata = make_fdata("scan");
+    fdata.suffix = ".cf32";
+    fdata.type = O_RAWFILE;
+    output_t output = make_output(&fdata, O_RAWFILE);
+
+    for (int b = 0; b < 10; b++) {  // first activity: file created
+        feed_raw_batch(&channel, b);
+        ASSERT_EQ(file_write(&channel, &output), 0);
+    }
+    ASSERT_NE(fdata.f, (FILE*)NULL);
+
+    channel.axcindicate = NO_SIGNAL;
+    ASSERT_EQ(file_write(&channel, &output), 0);  // tail, file stays open
+    EXPECT_FALSE(output.active);
+
+    // second activity in the same hour: written to the same open file, no re-buffering
+    for (int b = 10; b < 12; b++) {
+        channel.axcindicate = SIGNAL;
+        feed_raw_batch(&channel, b);
+        ASSERT_EQ(file_write(&channel, &output), 0);
+    }
+    ASSERT_NE(fdata.f, (FILE*)NULL);
+    EXPECT_TRUE(fdata.audio_buf.empty());
+
+    time_t now = time(NULL);
+    char ts[32];
+    ASSERT_GT(strftime(ts, sizeof(ts), "_%Y%m%d_%H", gmtime(&now)), 0);
+    EXPECT_EQ(fdata.file_path, temp_dir + "/scan" + ts + ".cf32");
+
+    close_file(&output);
+}
+
+TEST_F(FileOutputTest, non_split_short_activity_slot_release_drops_buffer) {
+    channel_t channel = make_channel(172800000);
+    file_data fdata = make_fdata("scan");
+    fdata.suffix = ".cf32";
+    fdata.type = O_RAWFILE;
+    output_t output = make_output(&fdata, O_RAWFILE);
+
+    for (int b = 0; b < 4; b++) {  // 0.5s < min: buffered, no file
+        feed_raw_batch(&channel, b);
+        ASSERT_EQ(file_write(&channel, &output), 0);
+    }
+    ASSERT_FALSE(fdata.audio_buf.empty());
+    ASSERT_EQ(fdata.f, (FILE*)NULL);
+
+    // carrier released on the wideband slot
+    channel.freqlist[0].frequency = 0;
+    ASSERT_EQ(file_write(&channel, &output), 0);
+
+    EXPECT_TRUE(fdata.audio_buf.empty());
+    EXPECT_EQ(fdata.f, (FILE*)NULL);
+}
+
+TEST_F(FileOutputTest, file_write_without_freqlist_does_not_crash) {
+    // mixer channels have no freqlist (NULL) - file output must still work
+    channel_t channel = {};
+    channel.mode = MM_MONO;
+    channel.axcindicate = SIGNAL;
+    file_data fdata = make_fdata("mix");
+    fdata.suffix = ".cf32";
+    fdata.type = O_RAWFILE;
+    output_t output = make_output(&fdata, O_RAWFILE);
+
+    for (int b = 0; b < 10; b++) {  // 1.25s > split_min_file_time (1.0s)
+        feed_raw_batch(&channel, b);
+        ASSERT_EQ(file_write(&channel, &output), 0);
+    }
+    ASSERT_NE(fdata.f, (FILE*)NULL);
+
+    std::string final_path = fdata.file_path;
+    channel.axcindicate = NO_SIGNAL;
+    ASSERT_EQ(file_write(&channel, &output), 0);
+    close_file(&output);
+
+    EXPECT_GT(file_size(final_path), 0);
+}
+
+TEST_F(FileOutputTest, non_split_continuous_opens_immediately) {
+    channel_t channel = make_channel(172800000);
+    file_data fdata = make_fdata("scan");
+    fdata.suffix = ".cf32";
+    fdata.type = O_RAWFILE;
+    fdata.continuous = true;
+    output_t output = make_output(&fdata, O_RAWFILE);
+
+    // continuous output is not buffered: the file is created on the first batch
+    feed_raw_batch(&channel, 0);
+    ASSERT_EQ(file_write(&channel, &output), 0);
+
+    ASSERT_NE(fdata.f, (FILE*)NULL);
+    EXPECT_TRUE(fdata.audio_buf.empty());
+
+    close_file(&output);
 }
