@@ -17,11 +17,11 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, see <https://www.gnu.org/licenses/>.
  */
+#include <lame/lame.h>
 #include <shout/shout.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <syslog.h>
-#include <lame/lame.h>
+#include <unistd.h>
 
 // SHOUTERR_RETRY is available since libshout 2.4.0.
 // Set it to an impossible value if it's not there.

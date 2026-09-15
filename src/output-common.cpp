@@ -17,16 +17,16 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, see <https://www.gnu.org/licenses/>.
  */
+#include "output-common.h"
 #include <stdio.h>
 #include <sys/time.h>
-#include <unistd.h>
 #include <syslog.h>
+#include <unistd.h>
 #include <cassert>
 #include <cerrno>
 #include <cstring>
 #include "config.h"
 #include "input-common.h"
-#include "output-common.h"
 #include "output-file.h"
 #include "output-icecast.h"
 #include "output-pulse.h"

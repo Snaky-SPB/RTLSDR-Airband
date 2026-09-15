@@ -18,10 +18,10 @@
  * along with this program; if not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "output-pulse.h"
 #include <pulse/pulseaudio.h>
 #include <syslog.h>
 #include <iostream>
-#include "output-pulse.h"
 #include "rtl_airband.h"
 
 #define SERVER_IFNOTNULL(x) ((x) ? (x) : "<default_server>")
