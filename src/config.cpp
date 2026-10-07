@@ -33,28 +33,36 @@
 
 using namespace std;
 
-// resolve per-output split file time settings, falling back to the global values
-static void parse_split_file_times(libconfig::Setting& out, file_data* fdata) {
-    fdata->activity_active = false;
-    fdata->split_min_file_time = split_min_file_time;
-    fdata->split_max_file_time = split_max_file_time;
-    fdata->split_max_idle_time = split_max_idle_time;
+// report a fatal config error against one output and exit
+static void output_error(int i, int j, int o, bool parsing_mixers, const string& msg) {
+    if (parsing_mixers) {
+        cerr << "Configuration error: mixers.[" << i << "] outputs.[" << o << "]: ";
+    } else {
+        cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: ";
+    }
+    cerr << msg << "\n";
+    error();
+}
 
-    if (out.exists("split_min_file_time") && !setting_as_double(out["split_min_file_time"], &fdata->split_min_file_time)) {
-        cerr << "Configuration error: split_min_file_time must be a number\n";
-        error();
+// resolve per-output split file time settings, falling back to the global values
+static void parse_split_file_times(libconfig::Setting& out, file_data* fdata, int i, int j, int o, bool parsing_mixers) {
+    if (parsing_mixers && (out.exists("split_min_file_time") || out.exists("split_max_file_time") || out.exists("split_max_idle_time"))) {
+        output_error(i, j, o, parsing_mixers, "split file time settings are not allowed for mixers");
     }
-    if (out.exists("split_max_file_time") && !setting_as_double(out["split_max_file_time"], &fdata->split_max_file_time)) {
-        cerr << "Configuration error: split_max_file_time must be a number\n";
-        error();
+
+    fdata->activity_active = false;
+    if (!setting_as_double_or(out, "split_min_file_time", global_split_min_file_time, &fdata->split_min_file_time)) {
+        output_error(i, j, o, parsing_mixers, "split_min_file_time must be a number");
     }
-    if (out.exists("split_max_idle_time") && !setting_as_double(out["split_max_idle_time"], &fdata->split_max_idle_time)) {
-        cerr << "Configuration error: split_max_idle_time must be a number\n";
-        error();
+    if (!setting_as_double_or(out, "split_max_file_time", global_split_max_file_time, &fdata->split_max_file_time)) {
+        output_error(i, j, o, parsing_mixers, "split_max_file_time must be a number");
     }
+    if (!setting_as_double_or(out, "split_max_idle_time", global_split_max_idle_time, &fdata->split_max_idle_time)) {
+        output_error(i, j, o, parsing_mixers, "split_max_idle_time must be a number");
+    }
+
     if (!valid_split_file_times(fdata->split_min_file_time, fdata->split_max_file_time, fdata->split_max_idle_time)) {
-        cerr << "Configuration error: invalid split file time settings (need split_min_file_time >= 1.0, split_max_file_time >= 1.0, split_max_idle_time > 0)\n";
-        error();
+        output_error(i, j, o, parsing_mixers, split_file_times_constraint);
     }
 }
 
@@ -101,22 +109,10 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
                     } else if (!strcmp(outs[o]["tls"], "disabled")) {
                         idata->tls_mode = SHOUT_TLS_DISABLED;
                     } else {
-                        if (parsing_mixers) {
-                            cerr << "Configuration error: mixers.[" << i << "] outputs.[" << o << "]: ";
-                        } else {
-                            cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: ";
-                        }
-                        cerr << "invalid value for tls; must be one of: auto, auto_no_plain, transport, upgrade, disabled\n";
-                        error();
+                        output_error(i, j, o, parsing_mixers, "invalid value for tls; must be one of: auto, auto_no_plain, transport, upgrade, disabled");
                     }
                 } else {
-                    if (parsing_mixers) {
-                        cerr << "Configuration error: mixers.[" << i << "] outputs.[" << o << "]: ";
-                    } else {
-                        cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: ";
-                    }
-                    cerr << "tls value must be a string\n";
-                    error();
+                    output_error(i, j, o, parsing_mixers, "tls value must be a string");
                 }
             } else {
                 idata->tls_mode = SHOUT_TLS_DISABLED;
@@ -131,13 +127,7 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
 
             fdata->type = O_FILE;
             if (!outs[o].exists("directory") || !outs[o].exists("filename_template")) {
-                if (parsing_mixers) {
-                    cerr << "Configuration error: mixers.[" << i << "] outputs.[" << o << "]: ";
-                } else {
-                    cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: ";
-                }
-                cerr << "both directory and filename_template required for file\n";
-                error();
+                output_error(i, j, o, parsing_mixers, "both directory and filename_template required for file");
             }
             fdata->basedir = outs[o]["directory"].c_str();
             fdata->basename = outs[o]["filename_template"].c_str();
@@ -149,25 +139,22 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
             fdata->split_on_transmission = outs[o].exists("split_on_transmission") ? (bool)(outs[o]["split_on_transmission"]) : false;
             fdata->include_freq = outs[o].exists("include_freq") ? (bool)(outs[o]["include_freq"]) : false;
             fdata->discontinuity_tone = outs[o].exists("discontinuity_tone") ? (bool)(outs[o]["discontinuity_tone"]) : true;
-            parse_split_file_times(outs[o], fdata);
+            parse_split_file_times(outs[o], fdata, i, j, o, parsing_mixers);
 
             channel->outputs[oo].has_mp3_output = true;
 
             if (fdata->split_on_transmission) {
                 if (parsing_mixers) {
-                    cerr << "Configuration error: mixers.[" << i << "] outputs.[" << o << "]: split_on_transmission is not allowed for mixers\n";
-                    error();
+                    output_error(i, j, o, parsing_mixers, "split_on_transmission is not allowed for mixers");
                 }
                 if (fdata->continuous) {
-                    cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: can't have both continuous and split_on_transmission\n";
-                    error();
+                    output_error(i, j, o, parsing_mixers, "can't have both continuous and split_on_transmission");
                 }
             }
 
         } else if (!strncmp(outs[o]["type"], "rawfile", 7)) {
             if (parsing_mixers) {  // rawfile outputs not allowed for mixers
-                cerr << "Configuration error: mixers.[" << i << "] outputs[" << o << "]: rawfile output is not allowed for mixers\n";
-                error();
+                output_error(i, j, o, parsing_mixers, "rawfile output is not allowed for mixers");
             }
             file_data* fdata = new file_data();
             channel->outputs[oo].data = fdata;
@@ -175,8 +162,7 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
 
             fdata->type = O_RAWFILE;
             if (!outs[o].exists("directory") || !outs[o].exists("filename_template")) {
-                cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: both directory and filename_template required for file\n";
-                error();
+                output_error(i, j, o, parsing_mixers, "both directory and filename_template required for file");
             }
 
             fdata->basedir = outs[o]["directory"].c_str();
@@ -189,38 +175,30 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
             fdata->split_on_transmission = outs[o].exists("split_on_transmission") ? (bool)(outs[o]["split_on_transmission"]) : false;
             fdata->include_freq = outs[o].exists("include_freq") ? (bool)(outs[o]["include_freq"]) : false;
             fdata->discontinuity_tone = outs[o].exists("discontinuity_tone") ? (bool)(outs[o]["discontinuity_tone"]) : true;
-            parse_split_file_times(outs[o], fdata);
+            parse_split_file_times(outs[o], fdata, i, j, o, parsing_mixers);
             channel->needs_raw_iq = channel->has_iq_outputs = 1;
 
             if (fdata->continuous && fdata->split_on_transmission) {
-                cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: can't have both continuous and split_on_transmission\n";
-                error();
+                output_error(i, j, o, parsing_mixers, "can't have both continuous and split_on_transmission");
             }
         } else if (!strncmp(outs[o]["type"], "mixer", 5)) {
             if (parsing_mixers) {  // mixer outputs not allowed for mixers
-                cerr << "Configuration error: mixers.[" << i << "] outputs.[" << o << "]: mixer output is not allowed for mixers\n";
-                error();
+                output_error(i, j, o, parsing_mixers, "mixer output is not allowed for mixers");
             }
             channel->outputs[oo].data = XCALLOC(1, sizeof(struct mixer_data));
             channel->outputs[oo].type = O_MIXER;
             mixer_data* mdata = (mixer_data*)(channel->outputs[oo].data);
             const char* name = (const char*)outs[o]["name"];
             if ((mdata->mixer = getmixerbyname(name)) == NULL) {
-                cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: unknown mixer \"" << name << "\"\n";
-                error();
+                output_error(i, j, o, parsing_mixers, "unknown mixer \"" + string(name) + "\"");
             }
             float ampfactor = outs[o].exists("ampfactor") ? (float)outs[o]["ampfactor"] : 1.0f;
             float balance = outs[o].exists("balance") ? (float)outs[o]["balance"] : 0.0f;
             if (balance < -1.0f || balance > 1.0f) {
-                cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: balance out of allowed range <-1.0;1.0>\n";
-                error();
+                output_error(i, j, o, parsing_mixers, "balance out of allowed range <-1.0;1.0>");
             }
             if ((mdata->input = mixer_connect_input(mdata->mixer, ampfactor, balance)) < 0) {
-                cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o
-                     << "]: "
-                        "could not connect to mixer "
-                     << name << ": " << mixer_get_error() << "\n";
-                error();
+                output_error(i, j, o, parsing_mixers, "could not connect to mixer " + string(name) + ": " + mixer_get_error());
             }
             debug_print("dev[%d].chan[%d].out[%d] connected to mixer %s as input %d (ampfactor=%.1f balance=%.1f)\n", i, j, o, name, mdata->input, ampfactor, balance);
         } else if (!strncmp(outs[o]["type"], "udp_stream", 6)) {
@@ -234,13 +212,7 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
             if (outs[o].exists("dest_address")) {
                 sdata->dest_address = strdup(outs[o]["dest_address"]);
             } else {
-                if (parsing_mixers) {
-                    cerr << "Configuration error: mixers.[" << i << "] outputs.[" << o << "]: ";
-                } else {
-                    cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: ";
-                }
-                cerr << "missing dest_address\n";
-                error();
+                output_error(i, j, o, parsing_mixers, "missing dest_address");
             }
 
             if (outs[o].exists("dest_port")) {
@@ -252,13 +224,7 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
                     sdata->dest_port = strdup(outs[o]["dest_port"]);
                 }
             } else {
-                if (parsing_mixers) {
-                    cerr << "Configuration error: mixers.[" << i << "] outputs.[" << o << "]: ";
-                } else {
-                    cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: ";
-                }
-                cerr << "missing dest_port\n";
-                error();
+                output_error(i, j, o, parsing_mixers, "missing dest_port");
             }
 #ifdef WITH_PULSEAUDIO
         } else if (!strncmp(outs[o]["type"], "pulse", 5)) {
@@ -275,8 +241,7 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
                 pdata->stream_name = strdup(outs[o]["stream_name"]);
             } else {
                 if (parsing_mixers) {
-                    cerr << "Configuration error: mixers.[" << i << "] outputs.[" << o << "]: PulseAudio outputs of mixers must have stream_name defined\n";
-                    error();
+                    output_error(i, j, o, parsing_mixers, "PulseAudio outputs of mixers must have stream_name defined");
                 }
                 char buf[1024];
                 snprintf(buf, sizeof(buf), "%.3f MHz", (float)channel->freqlist[0].frequency / 1000000.0f);
@@ -284,13 +249,7 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
             }
 #endif /* WITH_PULSEAUDIO */
         } else {
-            if (parsing_mixers) {
-                cerr << "Configuration error: mixers.[" << i << "] outputs.[" << o << "]: ";
-            } else {
-                cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: ";
-            }
-            cerr << "unknown output type\n";
-            error();
+            output_error(i, j, o, parsing_mixers, "unknown output type");
         }
         channel->outputs[oo].enabled = true;
         channel->outputs[oo].active = false;

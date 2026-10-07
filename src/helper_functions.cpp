@@ -86,6 +86,8 @@ string make_dated_subdirs(const string& basedir, const struct tm* time) {
     return "";
 }
 
+const char* const split_file_times_constraint = "invalid split file time settings (need split_min_file_time >= 1.0, split_max_file_time >= 1.0, split_max_idle_time > 0)";
+
 // min and max must be >= 1.0: split file names carry a 1-second-resolution timestamp and
 // consecutive file creations are at least that far apart (min + max_idle between activities,
 // max between rotations), so this keeps consecutive names unique. max (file rotation) is
@@ -97,7 +99,7 @@ bool valid_split_file_times(double split_min_file_time, double split_max_file_ti
 bool setting_as_double(const libconfig::Setting& setting, double* value) {
     switch (setting.getType()) {
         case libconfig::Setting::TypeFloat:
-            *value = (float)setting;
+            *value = (double)setting;
             return true;
         case libconfig::Setting::TypeInt:
             *value = (int)setting;
@@ -108,4 +110,12 @@ bool setting_as_double(const libconfig::Setting& setting, double* value) {
         default:
             return false;
     }
+}
+
+bool setting_as_double_or(const libconfig::Setting& parent, const char* key, double fallback, double* value) {
+    *value = fallback;
+    if (!parent.exists(key)) {
+        return true;
+    }
+    return setting_as_double(parent[key], value);
 }

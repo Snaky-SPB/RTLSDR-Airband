@@ -13,6 +13,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The repo is set up for development in VS Code using a devcontainer (`.devcontainer/`). When working inside the devcontainer, all compile, test, and run commands must be executed inside the container.
 
+Large system test cases for manual runs can be kept outside the repo in `../RTLSDR-Airband_test_cases/` (a sibling of the checkout, so several checkouts can share one copy). The devcontainer mounts it read-only at `system_tests/test_cases/` (gitignored); the pytest suite does not read it. `initializeCommand` creates an empty folder on the host if it is missing, so the container starts without it. This needs a POSIX host shell (macOS, Linux, WSL) and a container rebuild to take effect.
+
 ## Wiki Documentation
 
 User-facing documentation lives in a separate repo: https://github.com/rtl-airband/RTLSDR-Airband/wiki
@@ -67,7 +69,7 @@ Key CMake flags (all in `src/CMakeLists.txt`):
 | `SOAPYSDR` | ON | SoapySDR (vendor-neutral) driver |
 | `PULSEAUDIO` | ON | PulseAudio output |
 | `BUILD_UNITTESTS` | OFF | Build Google Test unit tests |
-| `BCM_VC` | OFF | Broadcom VideoCore GPU FFT (RPi v2 only) |
+| `BCM_VC` | OFF | Broadcom VideoCore GPU FFT (RPi v2 only; requires `PLATFORM=rpiv2`, which also turns it on) |
 
 ## Docker
 
@@ -111,7 +113,7 @@ Pre-commit hooks (`.pre-commit-config.yaml`) run on every commit and check:
 
 ## CI and Pull Request Checks
 
-Four workflows run on pull requests (`.github/workflows/`); the container build also runs on merges to `main`, tags, and a daily schedule:
+Four workflows run checks on open pull requests (`.github/workflows/`); `platform_build.yml` skips fork PRs. All of them except `code_formatting.yml` also run on pushes to `main`, tags, `workflow_dispatch`, and a daily schedule; `code_formatting.yml` runs on PRs and daily. A fifth, `version_bump.yml`, runs after a PR is merged — see [Version Tagging](#version-tagging).
 
 **`code_formatting.yml`** — runs `./scripts/reformat_code` and fails if any files differ.
 
@@ -122,13 +124,56 @@ cmake -B builds/Debug_nfm      -DCMAKE_BUILD_TYPE=Debug   -DNFM=TRUE -DBUILD_UNI
 cmake -B builds/Release        -DCMAKE_BUILD_TYPE=Release -DBUILD_UNITTESTS=TRUE
 cmake -B builds/Release_nfm    -DCMAKE_BUILD_TYPE=Release -DNFM=TRUE -DBUILD_UNITTESTS=TRUE
 ```
-Then runs `unittests` for all four, installs the Release+NFM build, and smoke-tests `rtl_airband -v`.
+Then runs `unittests` for all four, runs the system tests (`--mode thorough`) against the Release and Release+NFM builds, installs the Release+NFM build, and smoke-tests `rtl_airband -v`.
 
-**`platform_build.yml`** — builds and tests an AM Release configuration (`PLATFORM=native`) on a Pi 4B runner and an `ubuntu-22.04-arm` runner, then runs unit tests and system tests. (Pi 3B runner is currently disabled.)
+**`platform_build.yml`** — all self-hosted hardware. A single `airband-proxy` runner rsyncs the checkout to each Pi over SSH and runs build + unit tests + system tests there, so the Pis need no runner agent (32-bit ARM has no Node 24 after the Node 20 EOL):
 
-**`build_docker_containers.yml`** — builds and pushes the multi-arch container image (`linux/amd64`, `386`, `arm64`, `arm/v6`, `arm/v7`) to GitHub Container Registry, one job per platform via QEMU. Each pushed image is smoke-tested (`rtl_airband -v`) before the per-arch digests are merged into a single manifest.
+| Target | Arch | `PLATFORM` | `BCM_VC` | `--sudo` |
+|--------|------|------------|----------|----------|
+| `airband-4b` | 64-bit ARM | `native` | OFF | no |
+| `airband-3b` | 32-bit ARM | `rpiv2` | ON | yes |
+
+The workflow passes `--sudo` exactly when `BCM_VC=ON` (the VideoCore GPU FFT needs root). Each target's work dir is `~/rtlsdr-airband-ci` in the CI account's home (not a tmpfs, which is too small for the build tree and uv venv), reused across runs so builds stay warm; this relies on there being a single `airband-proxy` runner, which runs one job at a time.
+
+The proxy runner runs as user `airband-proxy` (`700` home, no sudo) and holds the targets' SSH key. On each Pi, CI logs in as `airband-build`, which has no password and either no sudo or, on BCM targets, a sudo rule for only the per-run `rtl_airband` binary. Build deps are **pre-installed** on the Pis, so the workflow never runs `install_dependencies` there. **Re-provision the Pis when `.github/install_dependencies` changes** — optional drivers (MiriSDR, SoapySDR, PulseAudio) are auto-detected, so a stale target may silently build without them rather than fail.
+
+Provisioning:
+1. As `airband-proxy`, run `.github/setup_orchestrator_ssh` (creates the key, pins host keys, and writes the managed `~/.ssh/config.d/airband-ci`, prepending an `Include` for it to `~/.ssh/config`; don't hand-edit the managed file, it is regenerated on every run) and copy the `sudo PROXY_PUBKEY=… PROXY_FROM=… .github/setup_remote_test_target` command it prints for each target.
+2. Run that command on each Pi (installs deps, the `airband-build` login with the `from=`-restricted key, a `/test_data` tmpfs, and uv). On `BCM_VC` targets (`airband-3b`) add `RTL_SUDO=1` after `sudo` (`sudo RTL_SUDO=1 PROXY_PUBKEY=…`, since `sudo` drops variables set before it) to grant the `rtl_airband` sudo rule; without it the account gets no sudo.
+3. Re-run `.github/setup_orchestrator_ssh` to verify access.
+
+Self-hosted runner security (public repo): `platform_build` is the only self-hosted job and is gated with `if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository` so **fork** PRs never execute on the hardware — keep this guard on any self-hosted job. This complements the repo setting requiring approval for outside collaborators, network-segmented runners, and keeping repo secrets out of these workflows.
+
+**`build_docker_containers.yml`** — builds the multi-arch container image (`linux/amd64`, `386`, `arm64`, `arm/v6`, `arm/v7`), one job per platform via QEMU. Every image is smoke-tested (`rtl_airband -v`) under its target platform. On push/tag/schedule/`workflow_dispatch` the images are pushed by digest to GitHub Container Registry and the `merge` job combines the per-arch digests into a single manifest. Pull requests only build and smoke-test locally (`--load`); a fork PR gets a read-only `GITHUB_TOKEN`, so the registry push is denied. The `Prepare` step's `push` output gates this.
 
 **Before submitting a PR**, the pre-commit hooks cover most checks automatically. For build system or config changes not touching `src/`, verify all four cmake configurations build cleanly by hand.
+
+## Version Tagging
+
+`version_bump.yml` runs when a PR is **merged into `main`** and tags the merge commit with [`anothrNick/github-tag-action@1.64.0`](https://github.com/anothrNick/github-tag-action). Configured with `WITH_V: true` (tags look like `v5.3.0`) and `DEFAULT_BUMP: patch`.
+
+The action scans the **full commit message body of every commit between the previous tag and the merge commit** (`git log "$tag_commit".."$commit" --format=%B`) for a bump keyword, so the keyword can live in any commit in the PR — it does not have to be in the merge commit. "Previous tag" means the highest semver tag, not the most recent one by date:
+
+| Keyword in a commit message | Result |
+|------|--------|
+| `#major` | `v5.3.0` → `v6.0.0` |
+| `#minor` | `v5.3.0` → `v5.4.0` |
+| `#patch` | `v5.3.0` → `v5.3.1` |
+| `#none` | no tag is created |
+| none of the above | `DEFAULT_BUMP: patch` applies → `v5.3.1` |
+
+Rules when writing commit messages:
+
+- **Every merged PR creates a tag** unless a commit says `#none`. With `DEFAULT_BUMP: patch`, doing nothing still bumps the patch version, so add a keyword only to ask for something other than a patch.
+- **Add `#minor` for a new user-facing feature or a new config option.** Add `#major` for a breaking change — a removed or renamed config key, or changed default behavior.
+- **Highest keyword wins**, checked in the order `#major` → `#minor` → `#patch` → `#none`. One `#major` anywhere in the PR's commits bumps major even if other commits say `#minor`.
+- **Matching is a plain substring search over the whole message**, body included. Never write these tokens in prose (for example "fixed a #minor issue") — it will bump the version. Refer to them as "the #minor keyword" only outside commit messages.
+- **`#minor` and `#major` also publish a GitHub Release** with generated notes; `#patch` and the default bump only create the tag (`if: steps.tag.outputs.part != 'patch'`).
+- Squash-merging collapses the PR's commits into one message, so make sure the keyword survives into the squash message.
+
+After tagging, the workflow re-runs `ci_build.yml`, `platform_build.yml`, and `build_docker_containers.yml` against the new tag (a tag pushed with `GITHUB_TOKEN` does not fire their own `tags: ['v*']` triggers, so they have to be dispatched explicitly).
+
+Note that those three dispatch steps are unguarded: on a `#none` merge the action leaves `new_tag` at the **existing** tag, so they re-run against the previous release and republish its container images.
 
 ## System Tests
 
@@ -228,7 +273,7 @@ devices: ( { type = "rtlsdr"; mode = "wideband_scan"; freq_from = 172.0; freq_to
              freq_blacklist = ( 172.500, 172.600 );
              outputs: ( { type = "file"; directory = "/var/log/radio";
                           filename_template = "SCAN-mobile"; append = true;
-                          include_freq = true; } ); } );
+                                                     include_freq = true; } ); } );
 ```
 
 Output types: `icecast`, `file`, `rawfile`, `udp_stream`, `mixer`, `pulse`.
