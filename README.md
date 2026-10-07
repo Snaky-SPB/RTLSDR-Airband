@@ -107,7 +107,7 @@ radios are now supported as well.
 
 ## Documentation
 
-User's manual is now on the [wiki](https://github.com/rtl-airband/RTLSDR-Airband/wiki).
+User's manual is now on the [wiki](https://github.com/Snaky-SPB/RTLSDR-Airband/wiki).
 
 ## Credits and thanks
 

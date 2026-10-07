@@ -17,7 +17,7 @@ Large system test cases for manual runs can be kept outside the repo in `../RTLS
 
 ## Wiki Documentation
 
-User-facing documentation lives in a separate repo: https://github.com/rtl-airband/RTLSDR-Airband/wiki
+User-facing documentation lives in a separate repo: https://github.com/Snaky-SPB/RTLSDR-Airband/wiki (fork wiki, cloned from https://github.com/rtl-airband/RTLSDR-Airband/wiki and extended with fork features)
 
 Flag when code changes require wiki updates and provide suggested content — do not edit the wiki directly.
 
